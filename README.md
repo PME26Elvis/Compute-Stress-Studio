@@ -6,7 +6,6 @@ event markers, and CSV export — so performance engineers and researchers can t
 without juggling many terminals.
 
 ![screenshot](docs/demo.png)  
-*(Add 1–2 screenshots under `docs/` and update the path here.)*
 
 ---
 
