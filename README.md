@@ -5,7 +5,7 @@ It integrates multiple load profiles (Constant / Pulsed / Ramp), live charts (Lo
 event markers, and CSV export — so performance engineers and researchers can test and log quickly  
 without juggling many terminals.
 
-![screenshot](docs/demo.png)  
+![screenshot](demo.png)  
 
 ---
 
