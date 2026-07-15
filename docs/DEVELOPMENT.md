@@ -4,18 +4,20 @@
 
 - `main.py`, `main_window.py`, `stress_test.py`: original PyQt CPU monitor/stress application.
 - `cpu_stress_cli.py`: standalone CPU duty-cycle stress CLI.
-- `gpu_stress_cli.py`: standalone adaptive NVIDIA GPU stress CLI.
-- `gpu_stress_portable.py`: frozen-app entry point that configures bundled CUDA component libraries and forces the CuPy backend.
-- `packaging/gpu_stress_portable.spec`: PyInstaller one-folder definition.
+- `gpu_stress_cli.py`: full adaptive NVIDIA GPU stress CLI.
+- `gpu_stress_portable.py`: frozen-app entry point that configures bundled CUDA libraries, applies personal defaults, and forces CuPy.
+- `gpu_stress_background.py`: Windows-only hidden launcher for the Quadro P2200 personal workflow.
+- `packaging/gpu_stress_portable.spec`: PyInstaller one-folder worker definition.
+- `packaging/gpu_stress_background.spec`: PyInstaller one-file Windows GUI-subsystem launcher definition.
+- `packaging/appimage/*`: AppDir launcher, desktop metadata, and icon.
 - `Dockerfile.gpu`: CUDA 12 runtime container using the CuPy backend.
-- `docker-compose.gpu.yml`: local Compose launcher with GPU reservation and CSV volume.
-- `tests/test_gpu_stress_cli.py`: CPU-only tests for parser, profile, memory sizing, and feedback-controller logic.
-- `tests/test_gpu_stress_portable.py`: CPU-only tests for portable-backend argument handling.
-- `requirements.txt`: original GUI/CPU dependencies.
-- `requirements-gpu.txt`: recommended full source GPU CLI dependencies.
-- `docs/PACKAGING.md`: user and maintainer packaging guide.
+- `docker-compose.gpu.yml`: Compose launcher with GPU reservation and personal defaults.
+- `tests/test_gpu_stress_cli.py`: parser, profile, sizing, and controller tests.
+- `tests/test_gpu_stress_portable.py`: portable backend and 96-hour/87-percent default tests.
+- `tests/test_gpu_stress_background.py`: hidden launcher argument tests.
+- `docs/QUADRO_P2200_PERSONAL_PRESET.md`: user-specific Traditional Chinese operation guide.
 
-The GPU modules intentionally do not import PyQt or a CUDA framework at module import time. This keeps `--help`, static checks, and CPU-only unit tests usable without a GPU.
+GPU modules do not import a CUDA framework at module import time. This keeps static checks, `--help`, and CPU-only tests usable on runners without NVIDIA hardware.
 
 ## GPU architecture
 
@@ -23,111 +25,156 @@ The GPU modules intentionally do not import PyQt or a CUDA framework at module i
 
 `make_monitor()` attempts:
 
-1. `NvmlMonitor` through `nvidia-ml-py`
-2. `NvidiaSmiMonitor` through the driver CLI
-3. `NullMonitor` for open-loop duty control
-
-NVML is preferred because its API and Python binding are intended for programmatic monitoring across driver versions. The `nvidia-smi` parser is a fallback only.
+1. `NvmlMonitor` through `nvidia-ml-py`;
+2. `NvidiaSmiMonitor` through the driver CLI;
+3. `NullMonitor` for open-loop duty control.
 
 ### Compute layer
 
-`make_backend()` attempts backends in a fixed order unless the user forces one:
+`make_backend()` attempts:
 
-1. `TorchBackend`
-2. `CupyBackend`
-3. `NumbaBackend`
+1. `TorchBackend`;
+2. `CupyBackend`;
+3. `NumbaBackend`.
 
-Torch and CuPy reuse three matrices and write into a preallocated output buffer. Numba uses a custom arithmetic kernel with enough blocks to cover the device's multiprocessors.
+The portable packages force CuPy. Torch and CuPy reuse three matrices and a preallocated output buffer. Numba uses a compute-heavy custom CUDA kernel.
 
 ### Load-control layer
 
-GPU APIs enqueue work asynchronously, so sleeping immediately after a launch does not create a reliable idle interval. Each backend's `run_chunk()` synchronizes before returning. The scheduler then uses a work-credit accumulator over fixed periods. This produces a long-term duty cycle even when the requested work slice is shorter than a single calibrated chunk.
+Each `run_chunk()` synchronizes before returning. The scheduler uses a work-credit accumulator over fixed periods so the long-term duty cycle remains meaningful even when a requested work slice is shorter than a calibrated kernel chunk.
 
-When utilization telemetry exists, `UtilizationController` applies an EMA-filtered PI correction. The controller is deliberately conservative to avoid oscillation from coarse NVML samples. Large profile changes reset the integral state.
+When utilization telemetry exists, `UtilizationController` uses an EMA-filtered PI correction. Large target changes reset controller state.
 
 ### Memory policy
 
-`_resolve_budget_mib()` preserves a driver/display reserve. `choose_matrix_size()` dedicates at most 70% of the effective budget to three resident tensors and aligns dimensions to 256. Backend allocation retries downward after OOM.
+`_resolve_budget_mib()` preserves driver/display headroom. `choose_matrix_size()` uses at most 70% of the effective budget for three resident tensors, aligns dimensions to 256, and retries smaller allocations after OOM.
 
-## Portable application architecture
+## Personal default layer
 
-### Why one-folder
+`gpu_stress_portable.py` defines:
 
-PyInstaller one-file mode extracts its Python interpreter, extension modules, and CUDA libraries to a temporary directory every time it starts. CUDA bundles are large, so that design causes unnecessary startup writes and is especially undesirable when the package is stored on an HDD. The release therefore ships a zipped one-folder application.
+```text
+DEFAULT_DURATION_SECONDS = 345600
+DEFAULT_LOAD_PERCENT = 87.0
+```
 
-### Why CuPy-only
+`_apply_personal_defaults()`:
 
-The source CLI keeps all three fallback backends. The frozen package intentionally carries one backend:
+- adds duration only when `--duration` is absent;
+- adds load only when both `--load` and `--profile` are absent;
+- preserves split and equals-style options;
+- leaves `--help`, `--diagnose`, and `--list-gpus` untouched.
 
-- CuPy gives direct access to cuBLAS GEMM;
-- CuPy wheels exist for Windows and Linux;
-- CUDA component wheels can be included beside the application;
-- excluding PyTorch and Numba avoids duplicated runtimes and JIT/compiler complexity.
+`build_portable_arguments()` then forces `--backend cupy`.
 
-`gpu_stress_portable.py` replaces any supplied backend value with `cupy`. This behavior is covered by CPU-only tests.
+The source `gpu_stress_cli.py` is intentionally unchanged and still requires an explicit duration. This prevents a source checkout from unexpectedly starting a 96-hour run while making packaged delivery convenient for the user's machine.
 
-### Bundled CUDA discovery
+## Windows hidden launcher
 
-CUDA component wheels install under the `nvidia` Python namespace. The spec copies that namespace into the application. Before importing CuPy, the portable entry point:
+`gpu_stress_background.py` is frozen with `console=False`, so Windows does not allocate a console window when it is double-clicked or launched from CMD.
 
-1. searches the frozen application roots for `nvidia/*/bin`, `lib`, `lib64`, and `lib/x64` directories;
-2. prepends them to `PATH` and `LD_LIBRARY_PATH` as appropriate;
-3. registers Windows DLL directories with `os.add_dll_directory()`;
-4. points `CUDA_PATH` at the bundled runtime when the user did not set one;
-5. puts the CuPy cache in the user's normal cache directory.
+The launcher locates `GPU-Stress-P2200-Worker.exe` beside itself and starts it with:
 
-The display driver remains a host requirement and is never bundled.
+- `CREATE_NO_WINDOW`;
+- `DETACHED_PROCESS`;
+- `CREATE_NEW_PROCESS_GROUP`;
+- stdin redirected from `DEVNULL`;
+- stdout/stderr appended to `P2200-Runs/gpu-stress-p2200-console.log`.
+
+It writes the worker PID to `P2200-Runs/gpu-stress-p2200.pid`. Before launching, it uses `OpenProcess` and `GetExitCodeProcess` to reject a duplicate active PID.
+
+The stable worker image name enables a simple stop command:
+
+```cmd
+taskkill /F /T /IM GPU-Stress-P2200-Worker.exe
+```
+
+The release workflow also copies the worker to `GPU-Stress-Portable.exe` as a compatibility alias. The background launcher always uses the P2200-specific worker name.
+
+## Portable CUDA discovery
+
+CUDA component wheels install under the `nvidia` Python namespace. The spec copies the namespace into the one-folder application. Before importing CuPy, the portable entry point:
+
+1. finds component `bin`, `lib`, `lib64`, and `lib/x64` directories;
+2. prepends them to process search paths;
+3. registers Windows DLL directories;
+4. explicitly preloads Linux CUDA shared objects globally;
+5. sets `CUDA_PATH` when needed;
+6. places the CuPy cache in the user's normal cache directory.
+
+The host display driver remains external.
+
+## AppImage architecture
+
+The Linux job first builds and validates the PyInstaller one-folder package. It then creates:
+
+```text
+AppDir/
+  AppRun
+  gpu-stress.desktop
+  gpu-stress.svg
+  .DirIcon
+  usr/bin/GPU-Stress-Portable/
+  usr/share/applications/
+  usr/share/icons/hicolor/scalable/apps/
+```
+
+`AppRun` resolves its own directory and executes the bundled portable CLI while forwarding all arguments. The official AppImageKit `appimagetool` continuous build creates `GPU-Stress-Portable-x86_64.AppImage`.
+
+CI runs the resulting AppImage with `APPIMAGE_EXTRACT_AND_RUN=1 --help`, avoiding a dependency on FUSE in the hosted runner.
 
 ## Container architecture
 
-`Dockerfile.gpu` starts from an NVIDIA CUDA 12 runtime image and installs only CuPy plus NVML Python bindings. NVIDIA Container Toolkit injects the host driver-facing libraries and selected devices when the image is started with `--gpus`.
+`Dockerfile.gpu` starts from an NVIDIA CUDA 12 runtime image and installs CuPy plus NVML bindings. The entry point forces CuPy and the default CMD supplies 345600 seconds, 87%, and CSV output under `/results`.
 
-The image entry point forces `--backend cupy`; all other CLI arguments remain available. `/results` is declared as a volume for CSV output.
-
-The GHCR image name is:
-
-```text
-ghcr.io/pme26elvis/cpu-monitor-stress-tool-gpu
-```
+NVIDIA Container Toolkit injects the host driver-facing libraries and selected GPU devices. The image never includes the host display driver.
 
 ## Release workflow
 
-`.github/workflows/release-gpu-packages.yml` has four stages:
+`.github/workflows/release-gpu-packages.yml`:
 
-1. resolve an automatic or manually supplied release tag;
-2. build Windows and Linux native PyInstaller packages;
-3. build, smoke-check, push, and export the Docker image;
-4. download all build artifacts, generate SHA256 checksums, and create/update the GitHub Release.
+1. resolves a manual tag or automatic `gpu-v0.3.<run-number>` tag;
+2. builds the Windows worker;
+3. builds the no-console Windows background launcher;
+4. assembles the scripts and P2200 guide into the Windows ZIP;
+5. builds the Linux folder package;
+6. builds and validates the AppImage;
+7. builds, validates, pushes, and exports the Docker image;
+8. enforces the 2 GB per-asset ceiling;
+9. generates SHA256 checksums;
+10. creates or updates the GitHub Release.
 
-The native packages are built on their target operating systems because PyInstaller does not cross-build Windows and Linux executables from one host.
-
-The Docker image is exported with `docker save` and zstd compression. The workflow enforces GitHub's 2 GB per-asset ceiling before uploading.
+PR runs build all assets but skip GHCR pushes and GitHub Release creation.
 
 ## Local validation
 
 CPU-only validation:
 
 ```bash
-python -m py_compile cpu_stress_cli.py gpu_stress_cli.py gpu_stress_portable.py
+python -m py_compile cpu_stress_cli.py gpu_stress_cli.py gpu_stress_portable.py gpu_stress_background.py
 python -m unittest discover -s tests -v
 python gpu_stress_cli.py --help
 python gpu_stress_portable.py --help
 ```
 
-GPU smoke validation:
-
-```bash
-python gpu_stress_cli.py --list-gpus
-python gpu_stress_cli.py --diagnose
-python gpu_stress_cli.py --duration 15 --load 25
-python gpu_stress_cli.py --duration 30 --load 100 --csv /tmp/gpu-smoke.csv
-```
-
-Portable build validation:
+Portable worker build:
 
 ```bash
 python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec
-./dist/GPU-Stress-Portable/GPU-Stress-Portable --help
+```
+
+Windows background launcher build:
+
+```powershell
+python -m PyInstaller --noconfirm packaging/gpu_stress_background.spec
+```
+
+GPU hardware smoke validation on the Quadro P2200:
+
+```cmd
+GPU-Stress-P2200-Worker.exe --diagnose
+GPU-Stress-P2200-Worker.exe --duration 30 --load 25
+GPU-Stress-P2200-Worker.exe --duration 1800 --load 87
 ```
 
 Container validation:
@@ -138,20 +185,20 @@ docker run --rm gpu-stress:local --help
 docker run --rm --gpus all gpu-stress:local --diagnose
 ```
 
-For a new GPU generation, compare `--dtype auto`, `--dtype float16`, and `--dtype float32`. The workload that reports the highest utilization is not always the one that reaches the highest board power.
-
 ## Testing without CUDA
 
-Unit tests must not import torch, cupy, numba, or pynvml. Keep optional imports inside constructors or runtime functions. Pure functions, controllers, and portable argument rewriting should remain independently testable.
+Unit tests must not import torch, cupy, numba, or pynvml. Keep optional imports inside constructors or runtime functions. Pure controllers and argument-rewriting helpers must remain independently testable.
 
-The release runners do not need GPUs to build packages or verify `--help`; actual CUDA execution remains a hardware smoke-test requirement.
+Release runners can build packages and validate `--help` without a GPU. Actual CUDA GEMM execution remains a hardware smoke-test requirement.
 
 ## Known limitations
 
-- NVML utilization is device-wide, so the feedback loop also sees unrelated graphics or compute work.
-- MIG device utilization queries may be unsupported by NVML; open-loop duty control remains available.
-- WDDM, laptop power sharing, power caps, and thermal throttling can make target utilization and board power diverge.
-- The portable app is x86-64 and CuPy-only.
-- PyInstaller Linux bundles can still encounter host glibc compatibility differences; Docker is the reproducible fallback.
-- Docker image layers are stored in Docker's data root after import, even when the downloaded archive lives on an HDD.
-- This is a stress/load tool, not an error-detection suite like a dedicated memory checker.
+- NVML utilization is device-wide and includes unrelated GPU work.
+- Target utilization is not a board-power target.
+- WDDM, power caps, cooling, and throttling can change behavior.
+- The portable and AppImage builds are x86-64 and CuPy-only.
+- PyInstaller Linux output can still encounter host glibc compatibility differences.
+- AppImage may require `APPIMAGE_EXTRACT_AND_RUN=1` on systems without functional FUSE integration.
+- Docker layers use Docker's data root after import.
+- The Windows launcher tracks one PID file; forcibly terminating the worker can leave a stale file, which is ignored after the PID is no longer active.
+- This is a load/stress tool, not a dedicated GPU memory error detector.

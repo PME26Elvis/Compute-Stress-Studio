@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=GPU Stress Portable
+Comment=Adaptive NVIDIA GPU stress runner with 96-hour 87-percent personal defaults
+Exec=GPU-Stress-Portable
+Icon=gpu-stress
+Terminal=true
+Categories=System;Utility;
+Keywords=GPU;NVIDIA;CUDA;Stress;Benchmark;

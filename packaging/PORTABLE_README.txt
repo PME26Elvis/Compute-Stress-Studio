@@ -1,6 +1,17 @@
 GPU Stress Portable (CUDA 12 / CuPy backend)
 ================================================
 
+Personal preset in this release
+-------------------------------
+When no run arguments are supplied, the portable worker and Linux packages use:
+
+- duration: 345600 seconds (96 hours)
+- target GPU utilization: 87 percent
+
+Explicit --duration, --load, or --profile arguments override these defaults.
+Informational commands such as --help, --diagnose, and --list-gpus do not start
+the long-running preset.
+
 What this package contains
 --------------------------
 This is a PyInstaller one-folder build of gpu_stress_cli.py. It bundles Python,
@@ -22,12 +33,26 @@ can be slower than on an SSD, but the steady-state stress loop reuses data in
 RAM and VRAM and does not depend on disk throughput. CSV logging is tiny.
 Do not run directly from inside the ZIP; extract the whole folder first.
 
-Windows examples
-----------------
-GPU-Stress-Portable.exe --list-gpus
-GPU-Stress-Portable.exe --diagnose
-GPU-Stress-Portable.exe --duration 300 --load 80
-GPU-Stress-Portable.exe --duration 900 --load 100 --csv gpu-full.csv
+Windows personal preset
+-----------------------
+Double-click GPU-Stress-P2200-Background.exe for a hidden background run.
+It starts GPU-Stress-P2200-Worker.exe with the 96-hour/87-percent preset and
+writes logs under P2200-Runs.
+
+Stop command to paste into Windows CMD:
+
+taskkill /F /T /IM GPU-Stress-P2200-Worker.exe
+
+The ZIP also contains START-P2200-96H-87.cmd and STOP-P2200-GPU-STRESS.cmd.
+See QUADRO_P2200_PERSONAL_PRESET.md for the complete guide.
+
+Windows foreground examples
+---------------------------
+GPU-Stress-P2200-Worker.exe --list-gpus
+GPU-Stress-P2200-Worker.exe --diagnose
+GPU-Stress-P2200-Worker.exe --duration 300 --load 80
+GPU-Stress-P2200-Worker.exe --duration 900 --load 100 --csv gpu-full.csv
+GPU-Stress-P2200-Worker.exe
 
 Linux examples
 --------------
@@ -35,6 +60,12 @@ chmod +x GPU-Stress-Portable
 ./GPU-Stress-Portable --list-gpus
 ./GPU-Stress-Portable --diagnose
 ./GPU-Stress-Portable --duration 300 --load 80
+./GPU-Stress-Portable
+
+AppImage example
+----------------
+chmod +x GPU-Stress-Portable-x86_64.AppImage
+./GPU-Stress-Portable-x86_64.AppImage
 
 Notes
 -----
@@ -43,7 +74,8 @@ Notes
 - The regular source version still supports PyTorch, CuPy, and Numba fallback.
 - The default workload uses a bounded VRAM budget and retries smaller matrices
   after allocation failure.
-- Quadro P2200-class Pascal cards are expected to work with a compatible driver.
-  Use --diagnose first, then a short 25% run before a full-load test.
-- GPU utilization and board-power percentage are different metrics. A 100%
-  utilization target does not promise exactly 100% of the card's power limit.
+- The personal machine target is the Quadro P2200 5 GB. Use --diagnose first,
+  then a short 25-percent run before the 96-hour background preset.
+- GPU utilization and board-power percentage are different metrics. An 87-
+  percent utilization target does not promise exactly 87 percent of the card's
+  power limit.

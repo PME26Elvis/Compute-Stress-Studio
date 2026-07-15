@@ -1,200 +1,196 @@
 # GPU Packaging and Distribution
 
-The repository ships the NVIDIA GPU stress tool in three forms:
+The repository ships the NVIDIA GPU stress tool in four delivery forms:
 
 1. the full Python source CLI with three backend fallbacks;
-2. a Windows/Linux portable app using the CuPy/cuBLAS backend;
-3. a CUDA 12 Docker image published to GHCR and attached to a GitHub Release as a compressed image archive.
+2. Windows/Linux portable folder packages using the CuPy/cuBLAS backend;
+3. a Linux x86-64 AppImage built from the same portable folder;
+4. a CUDA 12 Docker image published to GHCR and attached to Releases as a compressed image archive.
+
+## Personal preset
+
+The packaged applications use these defaults when duration/load are omitted:
+
+```text
+--duration 345600 --load 87
+```
+
+That is 96 hours and an 87% target GPU utilization. Explicit `--duration`, `--load`, or `--profile` values are preserved. `--help`, `--diagnose`, and `--list-gpus` remain informational and never receive the long-run defaults.
+
+The full source `gpu_stress_cli.py` still requires an explicit duration. The personal behavior is implemented in `gpu_stress_portable.py`, the Windows background launcher, Docker defaults, Compose, and convenience launchers.
 
 ## Which package should I use?
 
 | Package | Host setup | Main advantage | Main tradeoff |
 | --- | --- | --- | --- |
-| Source CLI | Python plus one or more CUDA Python backends | All backend fallbacks and easiest development | Requires pip packages |
-| Portable app | NVIDIA driver only | Extract and run; no Python, pip, or CUDA Toolkit | Large folder and CuPy-only backend |
-| Docker/GHCR | Docker GPU support plus NVIDIA driver | Reproducible environment and simple updates | Docker itself must be installed and image layers consume disk space |
+| Windows personal ZIP | NVIDIA driver only | Double-click hidden P2200 run, no Python/pip | Large one-folder bundle |
+| Linux folder archive | NVIDIA driver only | Transparent extracted layout | Host glibc compatibility matters |
+| Linux AppImage | NVIDIA driver only | One executable file | Large file; some hosts need extract-and-run mode |
+| Docker/GHCR | Docker GPU support plus NVIDIA driver | Reproducible environment | Docker and image-layer storage are required |
+| Source CLI | Python plus CUDA Python backend | All three backend fallbacks | Requires environment setup |
 
 ## HDD and disk-I/O behavior
 
-The stress workload is compute-bound, not storage-bound.
+The stress workload is compute-bound, not storage-bound:
 
-- Matrices are allocated once and then reused in VRAM.
-- The scheduler and controller remain in normal system memory.
-- No test data is streamed from disk.
-- CSV logging writes roughly one short row per status interval.
-- CuPy can write a small kernel cache on first use.
+- matrices are allocated once and reused in VRAM;
+- scheduler/controller state stays in RAM;
+- no test data is streamed from disk;
+- CSV writes are small and periodic;
+- CuPy may create a small cache on first use.
 
-The portable app can therefore be extracted to and run from an HDD. An HDD mainly affects extraction, startup, and the first cache creation. Once the test is running, drive speed should not affect GPU utilization or power draw.
+The Windows/Linux folder packages can live entirely on an HDD. The Windows hidden launcher intentionally writes its PID, console log, and CSV under `P2200-Runs` inside the extracted folder, so those files remain on the same HDD.
 
-The release uses PyInstaller **one-folder** mode instead of one-file mode. One-file applications unpack their bundled libraries to a temporary directory on every launch, creating unnecessary startup I/O and temporary-disk usage. One-folder mode is more suitable for a large CUDA application stored on an HDD.
+PyInstaller one-folder mode is retained for the CUDA worker because one-file mode would unpack hundreds of megabytes of runtime libraries on every launch. Only the tiny Windows background launcher uses PyInstaller one-file mode.
 
-Docker behaves differently: the downloaded `.tar.zst` release asset may be stored on an HDD, but after `docker load`, the image layers are copied into Docker's configured data root. To keep those layers off the system SSD, configure Docker Desktop/WSL storage or Docker Engine's data root to use the HDD.
+Docker differs: after `docker load`, layers are copied into Docker's configured data root even when the downloaded `.tar.zst` lives on an HDD.
 
-## Portable app
+## Windows personal package
 
-### Contents
+The Windows ZIP contains:
 
-The portable bundles contain:
-
-- the Python interpreter;
-- `gpu_stress_cli.py` and the portable entry point;
-- CuPy and NumPy;
-- NVML Python bindings;
-- CUDA 12 runtime, NVRTC, cuBLAS, and nvJitLink component libraries.
-
-The host still needs a compatible NVIDIA display driver. It does not need Python, pip, or a system-wide CUDA Toolkit.
-
-### Why the portable build is CuPy-only
-
-The full source CLI tries PyTorch, then CuPy, then Numba. Bundling all three would duplicate large CUDA runtimes, increase the release size substantially, and create more platform-specific failure points. The portable entry point forces `--backend cupy`, which still uses cuBLAS GEMM, the adaptive utilization controller, bounded VRAM allocation, thermal protection, telemetry, and CSV logging.
-
-### Windows usage
-
-1. Download `GPU-Stress-Portable-Windows-x64.zip` from Releases.
-2. Extract the complete folder to any drive, including an HDD.
-3. Open PowerShell or Command Prompt inside the extracted folder.
-4. Run:
-
-```powershell
-.\GPU-Stress-Portable.exe --list-gpus
-.\GPU-Stress-Portable.exe --diagnose
-.\GPU-Stress-Portable.exe --duration 30 --load 25
-.\GPU-Stress-Portable.exe --duration 300 --load 100 --csv gpu-full.csv
+```text
+GPU-Stress-P2200-Background.exe
+GPU-Stress-P2200-Worker.exe
+GPU-Stress-Portable.exe
+START-P2200-96H-87.cmd
+STOP-P2200-GPU-STRESS.cmd
+QUADRO_P2200_PERSONAL_PRESET.md
+_internal\...
 ```
 
-Do not move only the `.exe`; the `_internal` folder beside it contains the bundled runtime.
+### Background launcher architecture
 
-### Linux usage
+`GPU-Stress-P2200-Background.exe` is built with the Windows GUI subsystem (`console=False`). It:
+
+1. checks `P2200-Runs\gpu-stress-p2200.pid`;
+2. refuses to create a duplicate active worker;
+3. starts `GPU-Stress-P2200-Worker.exe` with `CREATE_NO_WINDOW`, `DETACHED_PROCESS`, and `CREATE_NEW_PROCESS_GROUP`;
+4. redirects stdout/stderr to `P2200-Runs\gpu-stress-p2200-console.log`;
+5. adds the 96-hour/87% defaults and CSV path only when omitted;
+6. exits immediately while the worker remains active.
+
+The worker has a stable executable name so users can stop it without resolving a PID:
+
+```cmd
+taskkill /F /T /IM GPU-Stress-P2200-Worker.exe
+```
+
+`GPU-Stress-Portable.exe` is copied as a compatibility alias of the same console worker.
+
+## Portable CUDA contents
+
+The worker bundles:
+
+- Python interpreter;
+- CuPy and NumPy;
+- NVML Python bindings;
+- CUDA 12 runtime, NVRTC, cuBLAS, and nvJitLink component libraries;
+- the adaptive controller, thermal guard, telemetry, and CSV logger.
+
+A compatible NVIDIA display driver remains required. Python, pip, and a system-wide CUDA Toolkit are not required.
+
+The portable worker is CuPy-only. Bundling PyTorch, CuPy, and Numba together would duplicate large runtimes and create more platform-specific DLL/JIT failure modes. The source CLI keeps the full fallback chain.
+
+## Linux folder package
 
 ```bash
 tar -xzf GPU-Stress-Portable-Linux-x64.tar.gz
 cd GPU-Stress-Portable
 chmod +x GPU-Stress-Portable
 ./GPU-Stress-Portable --diagnose
-./GPU-Stress-Portable --duration 300 --load 80 --csv gpu-80.csv
+./GPU-Stress-Portable
 ```
 
-PyInstaller Linux bundles target broadly similar glibc-based x86-64 distributions. The Docker image is the more reproducible Linux option when a portable binary encounters host-library compatibility issues.
+The final command uses the personal defaults.
+
+## Linux AppImage
+
+The workflow builds `GPU-Stress-Portable-x86_64.AppImage` by placing the validated PyInstaller folder under:
+
+```text
+AppDir/usr/bin/GPU-Stress-Portable/
+```
+
+`AppRun` executes the bundled CLI and forwards all arguments. Desktop metadata and an SVG icon are included at the AppDir root and under standard `usr/share` locations.
+
+Usage:
+
+```bash
+chmod +x GPU-Stress-Portable-x86_64.AppImage
+./GPU-Stress-Portable-x86_64.AppImage --diagnose
+./GPU-Stress-Portable-x86_64.AppImage
+```
+
+For hosts without working FUSE integration:
+
+```bash
+APPIMAGE_EXTRACT_AND_RUN=1 ./GPU-Stress-Portable-x86_64.AppImage --diagnose
+```
+
+The AppImage is produced with the official AppImageKit `appimagetool` continuous release. CI validates it using extract-and-run mode so hosted runners do not require FUSE.
 
 ## Docker image
 
-### Host requirements
+The image default command is:
 
-Linux requires:
+```text
+--duration 345600 --load 87 --csv /results/gpu-stress.csv
+```
 
-- an NVIDIA driver;
-- Docker Engine or another supported container engine;
-- NVIDIA Container Toolkit configured for Docker.
-
-Windows uses Docker Desktop with WSL2 GPU support and an appropriate NVIDIA Windows driver.
-
-The container does not install or replace the host display driver. NVIDIA Container Toolkit exposes the host GPU and driver libraries to the container.
-
-### Pull from GHCR
+Pull and use the personal default:
 
 ```bash
 docker pull ghcr.io/pme26elvis/cpu-monitor-stress-tool-gpu:latest
-
+mkdir -p results
 docker run --rm --gpus all \
   -v "$PWD/results:/results" \
+  ghcr.io/pme26elvis/cpu-monitor-stress-tool-gpu:latest
+```
+
+Custom parameters replace the Docker CMD:
+
+```bash
+docker run --rm --gpus all \
   ghcr.io/pme26elvis/cpu-monitor-stress-tool-gpu:latest \
-  --duration 300 \
-  --load 80 \
-  --csv /results/gpu-80.csv
+  --duration 300 --load 80
 ```
 
-On PowerShell:
+Linux hosts need an NVIDIA driver, Docker Engine, and NVIDIA Container Toolkit. Windows uses Docker Desktop/WSL2 GPU support. The container never bundles or replaces the host display driver.
 
-```powershell
-New-Item -ItemType Directory -Force results | Out-Null
+## Quadro P2200 target
 
-docker run --rm --gpus all `
-  --volume "${PWD}/results:/results" `
-  ghcr.io/pme26elvis/cpu-monitor-stress-tool-gpu:latest `
-  --duration 300 `
-  --load 80 `
-  --csv /results/gpu-80.csv
+The personal Windows workflow targets the user's Quadro P2200 5 GB machine. The default portable workload remains FP32 CuPy/cuBLAS with a 256 MiB upper VRAM budget. The goal is sustained compute loading without intentionally filling the 5 GB framebuffer.
+
+Recommended first-run sequence:
+
+```cmd
+GPU-Stress-P2200-Worker.exe --diagnose
+GPU-Stress-P2200-Worker.exe --duration 30 --load 25
+GPU-Stress-P2200-Worker.exe --duration 1800 --load 87
 ```
 
-### Select one physical GPU
-
-Container runtimes normally remap a selected physical GPU to CUDA device zero inside the container:
-
-```bash
-docker run --rm \
-  --gpus 'device=1' \
-  ghcr.io/pme26elvis/cpu-monitor-stress-tool-gpu:latest \
-  --device 0 \
-  --monitor-device 0 \
-  --duration 300 \
-  --load 100
-```
-
-The repository includes convenience launchers:
-
-```powershell
-.\scripts\run_gpu_docker.ps1 -Load 80 -Duration 300 -Device 0
-```
-
-```bash
-./scripts/run_gpu_docker.sh 80 300 0
-```
-
-### Docker Compose
-
-Edit the command in `docker-compose.gpu.yml` if necessary, then run:
-
-```bash
-docker compose -f docker-compose.gpu.yml up --abort-on-container-exit
-```
-
-CSV output is written to the local `results` directory.
-
-### Load the release asset without pulling GHCR
-
-Linux:
-
-```bash
-zstd -dc GPU-Stress-Docker-CUDA12-x86_64.tar.zst | docker load
-```
-
-Windows can decompress the `.zst` file with 7-Zip or `zstd.exe`, then load the resulting tar archive:
-
-```powershell
-docker load --input GPU-Stress-Docker-CUDA12-x86_64.tar
-```
-
-## Quadro P2200 compatibility
-
-The user's Quadro P2200 is a CUDA-capable Pascal GPU with 5 GB VRAM, so the FP32 CuPy/cuBLAS workload is an appropriate path. It has no Tensor Cores, so `--dtype float32` is the expected choice; the default `auto` mode already selects FP32.
-
-The default `--memory-mib 256` budget is small relative to 5 GB, and the allocator also reserves free VRAM and retries with smaller matrices after allocation failure. Start with:
-
-```powershell
-GPU-Stress-Portable.exe --diagnose
-GPU-Stress-Portable.exe --duration 30 --load 25
-GPU-Stress-Portable.exe --duration 120 --load 100 --temp-limit 85
-```
-
-If "Quadro P220" was intended literally rather than P2200, verify the exact model with `nvidia-smi`. The known machine configuration is Quadro P2200 5 GB.
+Only after those checks should the hidden 96-hour run be started.
 
 ## Release workflow
 
-`.github/workflows/release-gpu-packages.yml` performs the following:
+`.github/workflows/release-gpu-packages.yml`:
 
-1. builds Windows x64 and Linux x64 PyInstaller one-folder applications;
-2. validates that each frozen CLI starts and renders `--help`;
-3. builds and smoke-checks the CUDA 12 container;
-4. pushes versioned and `latest` tags to GHCR;
-5. exports the image to `GPU-Stress-Docker-CUDA12-x86_64.tar.zst`;
-6. creates SHA256 checksums;
-7. creates or updates a GitHub Release with all assets.
+1. builds the Windows worker and hidden launcher;
+2. assembles the personal ZIP with scripts and guide;
+3. builds and validates the Linux one-folder package;
+4. builds and validates the AppImage;
+5. builds and smoke-checks the CUDA 12 container;
+6. pushes versioned and `latest` GHCR tags on non-PR runs;
+7. exports the Docker image to `.tar.zst`;
+8. generates SHA256 checksums;
+9. creates or updates a GitHub Release.
 
-A relevant push to `main` creates an automatic tag such as `gpu-v0.2.<run-number>`. Maintainers can also run the workflow manually and provide an explicit tag.
+Relevant pushes to `main` create an automatic `gpu-v0.3.<run-number>` release.
 
 ## Build locally
 
-Portable app:
+Portable worker:
 
 ```bash
 python -m pip install \
@@ -208,7 +204,11 @@ python -m pip install \
 python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec
 ```
 
-PyInstaller must build separately on Windows and Linux; its output is specific to the operating system and Python architecture used during the build.
+Windows hidden launcher:
+
+```powershell
+python -m PyInstaller --noconfirm packaging/gpu_stress_background.spec
+```
 
 Docker:
 
