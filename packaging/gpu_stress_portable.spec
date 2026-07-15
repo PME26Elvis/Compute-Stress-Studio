@@ -16,7 +16,14 @@ datas = cupy_datas + backend_datas
 binaries = cupy_binaries + backend_binaries
 hiddenimports = sorted(set(cupy_hidden + backend_hidden + ["pynvml"]))
 
-for distribution in ("cupy-cuda12x", "nvidia-ml-py"):
+for distribution in (
+    "cupy-cuda12x",
+    "nvidia-ml-py",
+    "nvidia-cuda-runtime-cu12",
+    "nvidia-cuda-nvrtc-cu12",
+    "nvidia-cublas-cu12",
+    "nvidia-nvjitlink-cu12",
+):
     try:
         datas += copy_metadata(distribution)
     except Exception:
