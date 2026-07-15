@@ -1,0 +1,258 @@
+name: GPU portable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag; leave the default unless intentionally replacing a release
+        required: true
+        default: gpu-v0.2.0
+        type: string
+      prerelease:
+        description: Mark the GitHub release as a prerelease
+        required: true
+        default: false
+        type: boolean
+  push:
+    branches: [main]
+    paths:
+      - gpu_stress_cli.py
+      - gpu_stress_portable.py
+      - packaging/**
+      - Dockerfile.gpu
+      - .dockerignore
+      - docker-compose.gpu.yml
+      - scripts/run_gpu_docker.*
+      - .github/workflows/release-gpu-packages.yml
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: gpu-portable-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.release_tag }}"
+            prerelease="${{ inputs.prerelease }}"
+          else
+            tag="gpu-v0.2.${GITHUB_RUN_NUMBER}"
+            prerelease="false"
+          fi
+          tag="${tag#refs/tags/}"
+          if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  windows-portable:
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install portable build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install `
+            "pyinstaller==6.21.0" `
+            "cupy-cuda12x>=13,<15" `
+            "nvidia-ml-py>=12,<14" `
+            "nvidia-cuda-runtime-cu12>=12,<13" `
+            "nvidia-cuda-nvrtc-cu12>=12,<13" `
+            "nvidia-cublas-cu12>=12,<13" `
+            "nvidia-nvjitlink-cu12>=12,<13"
+      - name: Build Windows one-folder app
+        shell: pwsh
+        run: python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec
+      - name: Validate frozen CLI startup
+        shell: pwsh
+        run: .\dist\GPU-Stress-Portable\GPU-Stress-Portable.exe --help
+      - name: Package Windows asset
+        shell: pwsh
+        run: |
+          $asset = "GPU-Stress-Portable-Windows-x64.zip"
+          Compress-Archive -Path ".\dist\GPU-Stress-Portable\*" -DestinationPath $asset -CompressionLevel Optimal
+          $size = (Get-Item $asset).Length
+          Write-Host "asset_size_bytes=$size"
+          if ($size -ge 2000000000) { throw "Release asset is too large for GitHub Releases" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable
+          path: GPU-Stress-Portable-Windows-x64.zip
+          compression-level: 0
+          retention-days: 3
+
+  linux-portable:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install portable build dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install \
+            "pyinstaller==6.21.0" \
+            "cupy-cuda12x>=13,<15" \
+            "nvidia-ml-py>=12,<14" \
+            "nvidia-cuda-runtime-cu12>=12,<13" \
+            "nvidia-cuda-nvrtc-cu12>=12,<13" \
+            "nvidia-cublas-cu12>=12,<13" \
+            "nvidia-nvjitlink-cu12>=12,<13"
+      - name: Build Linux one-folder app
+        run: python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec
+      - name: Validate frozen CLI startup
+        run: ./dist/GPU-Stress-Portable/GPU-Stress-Portable --help
+      - name: Package Linux asset
+        run: |
+          tar -C dist -czf GPU-Stress-Portable-Linux-x64.tar.gz GPU-Stress-Portable
+          size="$(stat -c%s GPU-Stress-Portable-Linux-x64.tar.gz)"
+          echo "asset_size_bytes=$size"
+          test "$size" -lt 2000000000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-portable
+          path: GPU-Stress-Portable-Linux-x64.tar.gz
+          compression-level: 0
+          retention-days: 3
+
+  docker-image:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set image name
+        id: image
+        shell: bash
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-gpu"
+          echo "name=$image" >> "$GITHUB_OUTPUT"
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build image
+        run: |
+          docker build \
+            --file Dockerfile.gpu \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${{ needs.prepare.outputs.release_tag }}" \
+            --tag "${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.release_tag }}" \
+            --tag "${{ steps.image.outputs.name }}:latest" \
+            .
+      - name: Validate container CLI startup
+        run: docker run --rm "${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.release_tag }}" --help
+      - name: Push GHCR tags
+        run: |
+          docker push "${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.release_tag }}"
+          docker push "${{ steps.image.outputs.name }}:latest"
+      - name: Export Docker image asset
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          docker save "${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.release_tag }}" \
+            | zstd -T0 -15 -o GPU-Stress-Docker-CUDA12-x86_64.tar.zst
+          printf '%s\n' \
+            "${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.release_tag }}" \
+            "${{ steps.image.outputs.name }}:latest" \
+            > GPU-Stress-Docker-IMAGE.txt
+          size="$(stat -c%s GPU-Stress-Docker-CUDA12-x86_64.tar.zst)"
+          echo "asset_size_bytes=$size"
+          test "$size" -lt 2000000000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: |
+            GPU-Stress-Docker-CUDA12-x86_64.tar.zst
+            GPU-Stress-Docker-IMAGE.txt
+          compression-level: 0
+          retention-days: 3
+
+  release:
+    needs: [prepare, windows-portable, linux-portable, docker-image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Generate checksums and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS.txt
+          cd ..
+          cat > release-notes.md <<'EOF'
+          ## NVIDIA GPU stress packages
+
+          This release provides three no-pip delivery formats:
+
+          - **Windows x64 portable app**: extract the full ZIP and run `GPU-Stress-Portable.exe`.
+          - **Linux x64 portable app**: extract the archive and run `GPU-Stress-Portable`.
+          - **CUDA 12 Docker image archive**: load with `zstd -dc <file> | docker load`.
+
+          The container is also published to GHCR. See `GPU-Stress-Docker-IMAGE.txt` for the exact image tags.
+
+          The portable apps bundle Python, CuPy, NVML bindings, and the CUDA 12 user-mode components used by the workload. A compatible NVIDIA driver is still required. No system-wide Python, pip packages, or CUDA Toolkit installation is required.
+
+          The app packages use the CuPy/cuBLAS backend. The source CLI retains the PyTorch → CuPy → Numba fallback chain.
+          EOF
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease_flag=()
+          if [[ "$PRERELEASE" == "true" ]]; then
+            prerelease_flag+=(--prerelease)
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "GPU Stress Portable $RELEASE_TAG" \
+              --notes-file release-notes.md \
+              "${prerelease_flag[@]}"
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "GPU Stress Portable $RELEASE_TAG" \
+              --notes-file release-notes.md \
+              "${prerelease_flag[@]}"
+          fi
