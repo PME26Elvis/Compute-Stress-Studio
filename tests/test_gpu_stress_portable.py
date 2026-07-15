@@ -30,5 +30,42 @@ class PortableBackendArgumentTests(unittest.TestCase):
         self.assertEqual(original, ["--duration", "5"])
 
 
+class PersonalDefaultTests(unittest.TestCase):
+    def test_empty_arguments_get_96_hour_and_87_percent_defaults(self) -> None:
+        self.assertEqual(
+            portable._apply_personal_defaults([]),
+            ["--duration", "345600", "--load", "87.0"],
+        )
+
+    def test_explicit_duration_and_load_are_preserved(self) -> None:
+        self.assertEqual(
+            portable._apply_personal_defaults(["--duration", "60", "--load", "50"]),
+            ["--duration", "60", "--load", "50"],
+        )
+
+    def test_equals_style_options_are_preserved(self) -> None:
+        self.assertEqual(
+            portable._apply_personal_defaults(["--duration=120", "--load=70"]),
+            ["--duration=120", "--load=70"],
+        )
+
+    def test_profile_suppresses_constant_load_default(self) -> None:
+        self.assertEqual(
+            portable._apply_personal_defaults(["--profile", "ramp"]),
+            ["--profile", "ramp", "--duration", "345600"],
+        )
+
+    def test_informational_commands_do_not_get_long_run_defaults(self) -> None:
+        self.assertEqual(portable._apply_personal_defaults(["--diagnose"]), ["--diagnose"])
+        self.assertEqual(portable._apply_personal_defaults(["--list-gpus"]), ["--list-gpus"])
+        self.assertEqual(portable._apply_personal_defaults(["--help"]), ["--help"])
+
+    def test_final_arguments_include_defaults_and_cupy(self) -> None:
+        self.assertEqual(
+            portable.build_portable_arguments([]),
+            ["--duration", "345600", "--load", "87.0", "--backend", "cupy"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
