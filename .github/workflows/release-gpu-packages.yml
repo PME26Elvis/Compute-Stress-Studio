@@ -88,7 +88,13 @@ jobs:
             "nvidia-nvjitlink-cu12>=12,<13"
       - name: Build Windows one-folder app
         shell: pwsh
-        run: python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec
+        run: |
+          python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec *> pyinstaller-windows.log
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content pyinstaller-windows.log -Tail 100
+            exit $LASTEXITCODE
+          }
+          Get-Content pyinstaller-windows.log -Tail 20
       - name: Validate frozen CLI startup
         shell: pwsh
         run: .\dist\GPU-Stress-Portable\GPU-Stress-Portable.exe --help
@@ -129,7 +135,16 @@ jobs:
             "nvidia-cublas-cu12>=12,<13" \
             "nvidia-nvjitlink-cu12>=12,<13"
       - name: Build Linux one-folder app
-        run: python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec
+        shell: bash
+        run: |
+          set +e
+          python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec > pyinstaller-linux.log 2>&1
+          status=$?
+          if [[ $status -ne 0 ]]; then
+            tail -n 100 pyinstaller-linux.log
+            exit $status
+          fi
+          tail -n 20 pyinstaller-linux.log
       - name: Validate frozen CLI startup
         run: ./dist/GPU-Stress-Portable/GPU-Stress-Portable --help
       - name: Package Linux asset
