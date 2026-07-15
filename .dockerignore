@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+build
+dist
+results
+*.csv
+*.zip
+*.tar.gz
+*.tar.zst
