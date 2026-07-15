@@ -6,7 +6,7 @@ on:
       release_tag:
         description: Release tag; leave the default unless intentionally replacing a release
         required: true
-        default: gpu-v0.2.0
+        default: gpu-v0.3.0
         type: string
       prerelease:
         description: Mark the GitHub release as a prerelease
@@ -18,7 +18,9 @@ on:
     paths: &gpu-package-paths
       - gpu_stress_cli.py
       - gpu_stress_portable.py
+      - gpu_stress_background.py
       - packaging/**
+      - docs/QUADRO_P2200_PERSONAL_PRESET.md
       - Dockerfile.gpu
       - .dockerignore
       - docker-compose.gpu.yml
@@ -53,7 +55,7 @@ jobs:
             tag="gpu-pr-${{ github.event.pull_request.number }}-${GITHUB_RUN_NUMBER}"
             prerelease="true"
           else
-            tag="gpu-v0.2.${GITHUB_RUN_NUMBER}"
+            tag="gpu-v0.3.${GITHUB_RUN_NUMBER}"
             prerelease="false"
           fi
           tag="${tag#refs/tags/}"
@@ -86,18 +88,41 @@ jobs:
             "nvidia-cuda-nvrtc-cu12>=12,<13" `
             "nvidia-cublas-cu12>=12,<13" `
             "nvidia-nvjitlink-cu12>=12,<13"
-      - name: Build Windows one-folder app
+      - name: Build Windows worker app
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec *> pyinstaller-windows.log
+          python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec *> pyinstaller-windows-worker.log
           if ($LASTEXITCODE -ne 0) {
-            Get-Content pyinstaller-windows.log -Tail 100
+            Get-Content pyinstaller-windows-worker.log -Tail 100
             exit $LASTEXITCODE
           }
-          Get-Content pyinstaller-windows.log -Tail 20
-      - name: Validate frozen CLI startup
+          Get-Content pyinstaller-windows-worker.log -Tail 20
+      - name: Build hidden P2200 launcher
         shell: pwsh
-        run: .\dist\GPU-Stress-Portable\GPU-Stress-Portable.exe --help
+        run: |
+          python -m PyInstaller --noconfirm packaging/gpu_stress_background.spec *> pyinstaller-windows-background.log
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content pyinstaller-windows-background.log -Tail 100
+            exit $LASTEXITCODE
+          }
+          Get-Content pyinstaller-windows-background.log -Tail 20
+      - name: Assemble Windows personal bundle
+        shell: pwsh
+        run: |
+          $bundle = ".\dist\GPU-Stress-Portable"
+          Copy-Item "$bundle\GPU-Stress-P2200-Worker.exe" "$bundle\GPU-Stress-Portable.exe"
+          Copy-Item ".\dist\GPU-Stress-P2200-Background.exe" "$bundle\GPU-Stress-P2200-Background.exe"
+          Copy-Item ".\packaging\START-P2200-96H-87.cmd" "$bundle\START-P2200-96H-87.cmd"
+          Copy-Item ".\packaging\STOP-P2200-GPU-STRESS.cmd" "$bundle\STOP-P2200-GPU-STRESS.cmd"
+          Copy-Item ".\docs\QUADRO_P2200_PERSONAL_PRESET.md" "$bundle\QUADRO_P2200_PERSONAL_PRESET.md"
+      - name: Validate Windows frozen executables
+        shell: pwsh
+        run: |
+          .\dist\GPU-Stress-Portable\GPU-Stress-P2200-Worker.exe --help
+          .\dist\GPU-Stress-Portable\GPU-Stress-Portable.exe --help
+          if (-not (Test-Path .\dist\GPU-Stress-Portable\GPU-Stress-P2200-Background.exe)) {
+            throw "Hidden P2200 launcher is missing"
+          }
       - name: Package Windows asset
         shell: pwsh
         run: |
@@ -145,18 +170,46 @@ jobs:
             exit $status
           fi
           tail -n 20 pyinstaller-linux.log
-      - name: Validate frozen CLI startup
+      - name: Validate frozen Linux CLI
         run: ./dist/GPU-Stress-Portable/GPU-Stress-Portable --help
-      - name: Package Linux asset
+      - name: Package Linux tar archive
         run: |
+          cp docs/QUADRO_P2200_PERSONAL_PRESET.md dist/GPU-Stress-Portable/QUADRO_P2200_PERSONAL_PRESET.md
           tar -C dist -czf GPU-Stress-Portable-Linux-x64.tar.gz GPU-Stress-Portable
           size="$(stat -c%s GPU-Stress-Portable-Linux-x64.tar.gz)"
-          echo "asset_size_bytes=$size"
+          echo "tar_asset_size_bytes=$size"
+          test "$size" -lt 2000000000
+      - name: Build AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf AppDir
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
+          cp -a dist/GPU-Stress-Portable AppDir/usr/bin/GPU-Stress-Portable
+          cp packaging/appimage/AppRun AppDir/AppRun
+          cp packaging/appimage/gpu-stress.desktop AppDir/gpu-stress.desktop
+          cp packaging/appimage/gpu-stress.desktop AppDir/usr/share/applications/gpu-stress.desktop
+          cp packaging/appimage/gpu-stress.svg AppDir/gpu-stress.svg
+          cp packaging/appimage/gpu-stress.svg AppDir/.DirIcon
+          cp packaging/appimage/gpu-stress.svg AppDir/usr/share/icons/hicolor/scalable/apps/gpu-stress.svg
+          chmod +x AppDir/AppRun
+          curl --fail --location --retry 3 \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
+            --output appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 \
+            ./appimagetool-x86_64.AppImage AppDir GPU-Stress-Portable-x86_64.AppImage
+          chmod +x GPU-Stress-Portable-x86_64.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 ./GPU-Stress-Portable-x86_64.AppImage --help
+          size="$(stat -c%s GPU-Stress-Portable-x86_64.AppImage)"
+          echo "appimage_asset_size_bytes=$size"
           test "$size" -lt 2000000000
       - uses: actions/upload-artifact@v4
         with:
           name: linux-portable
-          path: GPU-Stress-Portable-Linux-x64.tar.gz
+          path: |
+            GPU-Stress-Portable-Linux-x64.tar.gz
+            GPU-Stress-Portable-x86_64.AppImage
           compression-level: 0
           retention-days: 3
 
@@ -236,19 +289,27 @@ jobs:
             | xargs -0 sha256sum > SHA256SUMS.txt
           cd ..
           cat > release-notes.md <<'EOF'
-          ## NVIDIA GPU stress packages
+          ## Quadro P2200 personal preset release
 
-          This release provides three no-pip delivery formats:
+          The portable defaults are now **96 hours (345600 seconds)** and **87% target GPU utilization** whenever duration/load are omitted.
 
-          - **Windows x64 portable app**: extract the full ZIP and run `GPU-Stress-Portable.exe`.
-          - **Linux x64 portable app**: extract the archive and run `GPU-Stress-Portable`.
-          - **CUDA 12 Docker image archive**: load with `zstd -dc <file> | docker load`.
+          ### Windows personal workflow
 
-          The container is also published to GHCR. See `GPU-Stress-Docker-IMAGE.txt` for the exact image tags.
+          - Double-click `GPU-Stress-P2200-Background.exe` for a completely hidden background run.
+          - The detached worker is `GPU-Stress-P2200-Worker.exe`.
+          - Stop it from CMD with `taskkill /F /T /IM GPU-Stress-P2200-Worker.exe`.
+          - `START-P2200-96H-87.cmd`, `STOP-P2200-GPU-STRESS.cmd`, and the dedicated P2200 guide are included in the ZIP.
 
-          The portable apps bundle Python, CuPy, NVML bindings, and the CUDA 12 user-mode components used by the workload. A compatible NVIDIA driver is still required. No system-wide Python, pip packages, or CUDA Toolkit installation is required.
+          ### Release formats
 
-          The app packages use the CuPy/cuBLAS backend. The source CLI retains the PyTorch → CuPy → Numba fallback chain.
+          - **Windows x64 portable app**: `GPU-Stress-Portable-Windows-x64.zip`
+          - **Linux x64 portable folder**: `GPU-Stress-Portable-Linux-x64.tar.gz`
+          - **Linux x86-64 AppImage**: `GPU-Stress-Portable-x86_64.AppImage`
+          - **CUDA 12 Docker image archive**: `GPU-Stress-Docker-CUDA12-x86_64.tar.zst`
+
+          The container is also published to GHCR. See `GPU-Stress-Docker-IMAGE.txt` for exact image tags.
+
+          The portable packages bundle Python, CuPy, NVML bindings, and the CUDA 12 user-mode components used by the workload. A compatible NVIDIA driver is still required; Python, pip packages, and a system-wide CUDA Toolkit are not required.
           EOF
       - name: Create or update GitHub release
         env:
@@ -268,14 +329,14 @@ jobs:
               --clobber
             gh release edit "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "GPU Stress Portable $RELEASE_TAG" \
+              --title "GPU Stress P2200 Personal Preset $RELEASE_TAG" \
               --notes-file release-notes.md \
               "${prerelease_flag[@]}"
           else
             gh release create "$RELEASE_TAG" release-assets/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "GPU Stress Portable $RELEASE_TAG" \
+              --title "GPU Stress P2200 Personal Preset $RELEASE_TAG" \
               --notes-file release-notes.md \
               "${prerelease_flag[@]}"
           fi
