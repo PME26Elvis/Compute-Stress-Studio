@@ -4,7 +4,6 @@
 from pathlib import Path
 import site
 
-from PyInstaller.building.datastruct import Tree
 from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 project_root = Path(SPECPATH).parent
@@ -30,12 +29,14 @@ for distribution in (
         pass
 
 # CUDA component wheels install their DLL/SO files under the nvidia namespace.
-# Copy the whole namespace so the frozen app only needs a compatible NVIDIA
-# display driver, not Python, pip, or a system-wide CUDA Toolkit.
+# A directory entry in Analysis.datas is copied recursively while preserving the
+# component-wheel layout. This keeps the frozen app independent of a system CUDA
+# Toolkit while avoiding Tree's three-column TOC, which Analysis.datas does not
+# accept directly.
 for site_root in site.getsitepackages():
     nvidia_root = Path(site_root) / "nvidia"
     if nvidia_root.is_dir():
-        datas += Tree(str(nvidia_root), prefix="nvidia")
+        datas.append((str(nvidia_root), "nvidia"))
 
 portable_readme = project_root / "packaging" / "PORTABLE_README.txt"
 if portable_readme.exists():
