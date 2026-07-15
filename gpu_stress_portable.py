@@ -4,6 +4,9 @@
 The regular source CLI keeps three optional compute backends. Release bundles
 use this wrapper so PyInstaller only needs to carry CuPy and the minimal CUDA 12
 runtime components needed by the GEMM workload.
+
+The user's personal portable preset is applied only when the corresponding
+arguments are omitted: 96 hours and 87 percent target GPU utilization.
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+DEFAULT_DURATION_SECONDS = 96 * 60 * 60
+DEFAULT_LOAD_PERCENT = 87.0
 _DLL_DIRECTORY_HANDLES: list[object] = []
 _PRELOADED_CUDA_LIBRARIES: list[object] = []
 
@@ -87,8 +92,6 @@ def _configure_bundled_cuda() -> None:
         for pattern in ("*/bin", "*/lib", "*/lib/x64", "*/lib64"):
             search_dirs.extend(path for path in nvidia_root.glob(pattern) if path.is_dir())
 
-    # Preserve stable order while removing duplicate paths discovered through
-    # both sys._MEIPASS and the executable directory.
     search_dirs = list(dict.fromkeys(path.resolve() for path in search_dirs))
 
     if search_dirs:
@@ -112,8 +115,6 @@ def _configure_bundled_cuda() -> None:
     if cuda_runtime_roots and "CUDA_PATH" not in os.environ:
         os.environ["CUDA_PATH"] = str(cuda_runtime_roots[0])
 
-    # CuPy may compile and cache tiny helper kernels on first use. Keep that
-    # cache in the user's normal cache directory instead of beside the app.
     if "CUPY_CACHE_DIR" not in os.environ:
         if os.name == "nt":
             cache_base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
@@ -122,6 +123,25 @@ def _configure_bundled_cuda() -> None:
         cache_dir = cache_base / "GPU-Stress-Portable" / "cupy-cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         os.environ["CUPY_CACHE_DIR"] = str(cache_dir)
+
+
+def _has_option(argv: list[str], option: str) -> bool:
+    return any(value == option or value.startswith(f"{option}=") for value in argv)
+
+
+def _apply_personal_defaults(argv: list[str]) -> list[str]:
+    """Apply 96-hour/87-percent defaults without overriding explicit options."""
+    output = list(argv)
+    informational = any(
+        value in {"-h", "--help", "--diagnose", "--list-gpus"} for value in output
+    )
+    if informational:
+        return output
+    if not _has_option(output, "--duration"):
+        output.extend(["--duration", str(DEFAULT_DURATION_SECONDS)])
+    if not _has_option(output, "--load") and not _has_option(output, "--profile"):
+        output.extend(["--load", str(DEFAULT_LOAD_PERCENT)])
+    return output
 
 
 def _force_cupy_backend(argv: list[str]) -> list[str]:
@@ -138,11 +158,16 @@ def _force_cupy_backend(argv: list[str]) -> list[str]:
     return output
 
 
+def build_portable_arguments(argv: list[str]) -> list[str]:
+    """Return the final CLI arguments used by every portable package."""
+    return _force_cupy_backend(_apply_personal_defaults(argv))
+
+
 def main() -> int:
     _configure_bundled_cuda()
     from gpu_stress_cli import main as cli_main
 
-    return cli_main(_force_cupy_backend(sys.argv[1:]))
+    return cli_main(build_portable_arguments(sys.argv[1:]))
 
 
 if __name__ == "__main__":
