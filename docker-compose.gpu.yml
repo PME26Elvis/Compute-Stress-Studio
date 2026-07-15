@@ -6,9 +6,9 @@ services:
       dockerfile: Dockerfile.gpu
     command:
       - --duration
-      - "300"
+      - "345600"
       - --load
-      - "80"
+      - "87"
       - --csv
       - /results/gpu-stress.csv
     volumes:
