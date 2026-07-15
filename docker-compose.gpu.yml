@@ -1,0 +1,22 @@
+services:
+  gpu-stress:
+    image: ghcr.io/pme26elvis/cpu-monitor-stress-tool-gpu:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    command:
+      - --duration
+      - "300"
+      - --load
+      - "80"
+      - --csv
+      - /results/gpu-stress.csv
+    volumes:
+      - ./results:/results
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
