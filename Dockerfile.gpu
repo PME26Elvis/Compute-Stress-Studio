@@ -18,9 +18,9 @@ COPY gpu_stress_cli.py /app/gpu_stress_cli.py
 RUN mkdir -p /results
 
 LABEL org.opencontainers.image.source="https://github.com/PME26Elvis/CPU-Monitor-Stress-Tool" \
-      org.opencontainers.image.description="Adaptive low-VRAM NVIDIA GPU stress CLI" \
+      org.opencontainers.image.description="Adaptive low-VRAM NVIDIA GPU stress CLI with a Quadro P2200 personal preset" \
       org.opencontainers.image.licenses="MIT"
 
 VOLUME ["/results"]
 ENTRYPOINT ["/usr/bin/tini", "--", "python3", "/app/gpu_stress_cli.py", "--backend", "cupy"]
-CMD ["--duration", "300", "--load", "80", "--csv", "/results/gpu-stress.csv"]
+CMD ["--duration", "345600", "--load", "87", "--csv", "/results/gpu-stress.csv"]
