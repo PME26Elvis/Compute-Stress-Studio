@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd -- "$(dirname -- "$(readlink -f "$0")")" && pwd)"
+exec "$HERE/usr/bin/GPU-Stress-Portable/GPU-Stress-Portable" "$@"
