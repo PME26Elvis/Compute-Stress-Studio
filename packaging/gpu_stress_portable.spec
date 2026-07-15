@@ -3,10 +3,12 @@
 
 from pathlib import Path
 import site
+import sys
 
 from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 project_root = Path(SPECPATH).parent
+worker_name = "GPU-Stress-P2200-Worker" if sys.platform == "win32" else "GPU-Stress-Portable"
 
 cupy_datas, cupy_binaries, cupy_hidden = collect_all("cupy")
 backend_datas, backend_binaries, backend_hidden = collect_all("cupy_backends")
@@ -28,11 +30,6 @@ for distribution in (
     except Exception:
         pass
 
-# CUDA component wheels install their DLL/SO files under the nvidia namespace.
-# A directory entry in Analysis.datas is copied recursively while preserving the
-# component-wheel layout. This keeps the frozen app independent of a system CUDA
-# Toolkit while avoiding Tree's three-column TOC, which Analysis.datas does not
-# accept directly.
 for site_root in site.getsitepackages():
     nvidia_root = Path(site_root) / "nvidia"
     if nvidia_root.is_dir():
@@ -62,7 +59,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="GPU-Stress-Portable",
+    name=worker_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
