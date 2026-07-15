@@ -1,0 +1,4 @@
+# Recommended, broadly compatible NVIDIA backend and stable NVML monitoring.
+# PyTorch wheels are large because they include CUDA user-space libraries.
+torch>=2.1
+nvidia-ml-py>=12.0
