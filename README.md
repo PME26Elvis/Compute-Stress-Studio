@@ -8,7 +8,8 @@ A small performance-testing repository with independent CPU and NVIDIA GPU paths
 - no-pip Windows/Linux portable GPU packages;
 - a hidden Windows background launcher tailored to the user's Quadro P2200;
 - a Linux x86-64 AppImage;
-- a CUDA 12 Docker image published to GHCR and GitHub Releases.
+- a CUDA 12 Docker image published to GHCR and GitHub Releases;
+- an independent native C++/JUCE CUDA WaveMix backup application with GUI, CLI, and no-window mode.
 
 The existing repository name is retained even though GPU support is now included.
 
@@ -56,6 +57,51 @@ QUADRO_P2200_PERSONAL_PRESET.md
 
 ---
 
+## Independent JUCE WaveMix backup
+
+`native-juce/` contains a second NVIDIA stress implementation written in C++20 with a JUCE 8 GUI. It is intentionally independent from the Python/CuPy portable application.
+
+| Area | Python portable implementation | JUCE WaveMix backup |
+| --- | --- | --- |
+| GPU workload | cuBLAS matrix multiplication | Custom CUDA WaveMix kernel |
+| Compute mix | GEMM-heavy FP32/FP16 | FP32 FMA, integer scrambling, shared/global-memory traffic |
+| Load control | NVML utilization PI feedback with duty fallback | Measured active-time duty windows |
+| Interface | CLI plus Windows background launcher | JUCE GUI, CLI, and no-window background mode |
+| Main purpose | Primary adaptive workload | Independent fallback and cross-validation workload |
+
+The WaveMix backend calibrates short CUDA launches to approximately 8 ms, then controls long-term load inside a 200 ms scheduling window. For the personal 87% preset, it requests approximately 174 ms of measured active execution per window. Telemetry is used for status and thermal protection rather than PI load control.
+
+Release builds explicitly include CUDA `sm_61` support for the Quadro P2200 and retain the same personal defaults:
+
+```text
+Duration: 345600 seconds (96 hours)
+Target duty load: 87%
+VRAM budget: 192 MiB
+Thermal pause: 85 C; resume at 80 C or below
+```
+
+### JUCE Windows entry points
+
+```text
+GPU-Stress-JUCE.exe                 JUCE GUI
+GPU-Stress-JUCE-Background.exe      No-window background mode
+GPU-Stress-JUCE-CLI.exe             Console and automation mode
+```
+
+Start the hidden backup by double-clicking `GPU-Stress-JUCE-Background.exe` or `START-JUCE-BACKUP-BACKGROUND.cmd`.
+
+Stop it from Windows CMD:
+
+```cmd
+taskkill /F /T /IM GPU-Stress-JUCE-Background.exe
+```
+
+The background application uses an inter-process lock so a second double-click does not create a duplicate 96-hour run. Logs, telemetry CSV, and the active PID are stored under `JUCE-Backup-Runs`.
+
+The complete guide is available at [docs/JUCE_WAVEMIX_BACKUP_GUIDE.md](docs/JUCE_WAVEMIX_BACKUP_GUIDE.md). Build architecture and source notes are under [native-juce/README.md](native-juce/README.md).
+
+---
+
 ## Features
 
 ### CPU GUI
@@ -85,7 +131,7 @@ QUADRO_P2200_PERSONAL_PRESET.md
 
 ### Release formats
 
-GPU releases provide:
+Primary Python/CuPy GPU releases provide:
 
 - `GPU-Stress-Portable-Windows-x64.zip`;
 - `GPU-Stress-Portable-Linux-x64.tar.gz`;
@@ -94,13 +140,21 @@ GPU releases provide:
 - a versioned and `latest` GHCR image;
 - `SHA256SUMS.txt`.
 
-The portable packages bundle Python, CuPy, NVML bindings, and the CUDA 12 user-mode libraries used by the cuBLAS workload. They require a compatible NVIDIA display driver, but not Python, pip packages, or a system-wide CUDA Toolkit.
+JUCE WaveMix backup releases provide:
 
-The Windows and Linux folder packages use PyInstaller one-folder mode. The complete extracted folder can live on an HDD: drive speed affects extraction and startup, but not steady-state GPU loading because the matrices remain in RAM/VRAM.
+- `GPU-Stress-JUCE-Backup-Windows-x64.zip`;
+- `GPU-Stress-JUCE-Backup-Linux-x64.tar.gz`;
+- `GPU-Stress-JUCE-Backup-x86_64.AppImage`;
+- `SHA256SUMS.txt`.
+
+The Python portable packages bundle Python, CuPy, NVML bindings, and the CUDA 12 user-mode libraries used by the cuBLAS workload. They require a compatible NVIDIA display driver, but not Python, pip packages, or a system-wide CUDA Toolkit.
+
+The Windows and Linux Python folder packages use PyInstaller one-folder mode. The complete extracted folder can live on an HDD: drive speed affects extraction and startup, but not steady-state GPU loading because the matrices remain in RAM/VRAM.
 
 Full guides:
 
 - [Quadro P2200 personal preset](docs/QUADRO_P2200_PERSONAL_PRESET.md)
+- [JUCE WaveMix P2200 backup](docs/JUCE_WAVEMIX_BACKUP_GUIDE.md)
 - [GPU stress usage](docs/GPU_STRESS.md)
 - [Portable app, AppImage, and Docker packaging](docs/PACKAGING.md)
 - [Development architecture](docs/DEVELOPMENT.md)
@@ -149,6 +203,29 @@ GPU-Stress-Portable.exe --duration 300 --load 80
 
 Do not move only an EXE out of the extracted folder; the adjacent `_internal` directory contains the bundled runtime.
 
+### Fastest JUCE backup setup
+
+1. Download and extract `GPU-Stress-JUCE-Backup-Windows-x64.zip`.
+2. Run the package-level synthetic self-test:
+
+```cmd
+GPU-Stress-JUCE-CLI.exe --self-test
+```
+
+3. Run a short real-GPU test:
+
+```cmd
+GPU-Stress-JUCE-CLI.exe --duration 30 --load 25
+```
+
+4. Open `GPU-Stress-JUCE.exe` for the dashboard, or double-click `GPU-Stress-JUCE-Background.exe` for the hidden 96-hour/87% backup run.
+
+Stop the hidden backup:
+
+```cmd
+taskkill /F /T /IM GPU-Stress-JUCE-Background.exe
+```
+
 ---
 
 ## Linux folder package
@@ -173,6 +250,16 @@ chmod +x GPU-Stress-Portable-x86_64.AppImage
 ```
 
 The AppImage contains the same PyInstaller/CuPy application and uses the same personal defaults when no run arguments are supplied.
+
+JUCE backup AppImage:
+
+```bash
+chmod +x GPU-Stress-JUCE-Backup-x86_64.AppImage
+./GPU-Stress-JUCE-Backup-x86_64.AppImage
+./GPU-Stress-JUCE-Backup-x86_64.AppImage --background
+```
+
+---
 
 ## Docker / GHCR
 
@@ -248,13 +335,39 @@ The full source CLI retains the PyTorch → CuPy → Numba fallback chain and st
 
 The default `--memory-mib 256` remains a conservative upper workload budget. For the Quadro P2200 5 GB, the FP32 CuPy/cuBLAS path and this bounded budget are appropriate for compute loading without intentionally filling VRAM.
 
-A target utilization percentage is not the same as a fixed board-power percentage. Display work, instruction mix, clocks, cooling, power caps, and thermal throttling can change power draw at the same utilization reading.
+### Native JUCE WaveMix source
+
+Host-only tests without CUDA or JUCE GUI compilation:
+
+```bash
+cmake -S native-juce -B build/juce-core \
+  -DGPU_STRESS_ENABLE_CUDA=OFF \
+  -DGPU_STRESS_BUILD_GUI=OFF \
+  -DGPU_STRESS_BUILD_TESTS=ON
+cmake --build build/juce-core
+ctest --test-dir build/juce-core --output-on-failure
+```
+
+Full CUDA/JUCE build:
+
+```bash
+cmake -S native-juce -B build/juce-native \
+  -DGPU_STRESS_ENABLE_CUDA=ON \
+  -DGPU_STRESS_BUILD_GUI=ON \
+  -DGPU_STRESS_BUILD_TESTS=ON
+cmake --build build/juce-native --config Release
+ctest --test-dir build/juce-native -C Release --output-on-failure
+```
+
+JUCE is fetched at the pinned version declared in `native-juce/CMakeLists.txt`. CUDA release builds include `sm_61` for the Quadro P2200.
+
+A target utilization or duty percentage is not the same as a fixed board-power percentage. Display work, instruction mix, clocks, cooling, power caps, and thermal throttling can change power draw at the same utilization reading.
 
 ---
 
 ## Build and release automation
 
-`.github/workflows/release-gpu-packages.yml` builds:
+`.github/workflows/release-gpu-packages.yml` builds the primary Python implementation:
 
 1. a Windows one-folder worker plus a one-file no-console background launcher;
 2. a Linux one-folder package;
@@ -264,13 +377,21 @@ A target utilization percentage is not the same as a fixed board-power percentag
 
 A relevant push to `main` creates an automatic `gpu-v0.3.<run-number>` release. The workflow can also be run manually with an explicit tag.
 
-PyInstaller outputs are OS-specific, so Windows and Linux packages are built separately rather than cross-compiled.
+`.github/workflows/release-juce-backup.yml` independently builds the C++/JUCE WaveMix backup:
+
+1. host-only C++ unit and integration tests;
+2. Windows Visual Studio + CUDA + JUCE GUI/CLI/background binaries;
+3. Linux CUDA + JUCE binaries, Xvfb GUI/background smoke tests, tar archive, and AppImage;
+4. JUCE license and third-party notices in every bundle;
+5. SHA256 checksums and a `juce-backup-v1.0.<run-number>` GitHub Release.
+
+Neither release workflow overwrites or substitutes the other implementation.
 
 ---
 
 ## Validation
 
-CPU-only checks:
+Python CPU-only checks:
 
 ```bash
 python -m py_compile cpu_stress_cli.py gpu_stress_cli.py gpu_stress_portable.py gpu_stress_background.py
@@ -279,7 +400,7 @@ python gpu_stress_cli.py --help
 python gpu_stress_portable.py --help
 ```
 
-GPU smoke test on the Quadro P2200 machine:
+Primary GPU smoke test on the Quadro P2200 machine:
 
 ```cmd
 GPU-Stress-P2200-Worker.exe --diagnose
@@ -287,38 +408,66 @@ GPU-Stress-P2200-Worker.exe --duration 30 --load 25
 GPU-Stress-P2200-Worker.exe --duration 1800 --load 87
 ```
 
+JUCE package checks:
+
+```cmd
+GPU-Stress-JUCE-CLI.exe --self-test
+GPU-Stress-JUCE-CLI.exe --dry-run --duration 5 --load 87
+GPU-Stress-JUCE-CLI.exe --duration 30 --load 25
+GPU-Stress-JUCE-CLI.exe --duration 1800 --load 87
+```
+
+The JUCE CI suite covers configuration parsing, duty-window math, engine completion and early stop, backend errors, thermal pause/hysteresis, log/CSV/PID lifecycle, CUDA compilation, GUI startup, no-window background dry-runs, and AppImage startup. Physical Quadro P2200 kernel execution remains a target-machine hardware smoke test because GitHub-hosted runners do not expose that GPU.
+
 ---
 
 ## Troubleshooting
 
 ### Stop the hidden Windows run
 
+Primary Python implementation:
+
 ```cmd
 taskkill /F /T /IM GPU-Stress-P2200-Worker.exe
 ```
 
+JUCE WaveMix backup:
+
+```cmd
+taskkill /F /T /IM GPU-Stress-JUCE-Background.exe
+```
+
 ### A second double-click does not start another worker
 
-This is intentional. Check `P2200-Runs\gpu-stress-p2200.pid` and the console log. Stop the existing worker before starting a new run.
+This is intentional. The Python launcher checks `P2200-Runs\gpu-stress-p2200.pid`; the JUCE backup uses an inter-process lock. Stop the existing worker before starting a new run.
 
 ### GPU CLI says no backend could start
 
-Run `--diagnose`. The source version lists every attempted backend and failure. The portable packages contain only the CuPy backend and still require a working NVIDIA driver.
+Run `--diagnose` on the Python build. The source version lists every attempted backend and failure. The Python portable packages contain only the CuPy backend and still require a working NVIDIA driver.
 
-### GPU utilization does not match `--load` exactly
+For the JUCE backup, run the synthetic package test first:
 
-Use a run longer than several driver sampling windows. Keep `--control auto` or use `--control feedback`. Other display and compute processes affect device-wide utilization.
+```cmd
+GPU-Stress-JUCE-CLI.exe --self-test
+```
 
-### Temperature repeatedly enters THERMAL-PAUSE
+Then try a short real-GPU run. CUDA initialization failures are written to the console and `JUCE-Backup-Runs` log.
+
+### GPU utilization does not match the target exactly
+
+The Python implementation uses utilization feedback when available. The JUCE backup uses measured active-time duty windows instead, so an 87% duty target does not guarantee that every `nvidia-smi` sample reads exactly 87%. Other display and compute processes also affect device-wide utilization.
+
+### Temperature repeatedly enters thermal pause
 
 Improve cooling, lower `--load`, or reduce the run duration. Do not disable the guard for unattended testing.
 
 ### AppImage cannot start normally
 
-Try:
+Try extract-and-run mode:
 
 ```bash
 APPIMAGE_EXTRACT_AND_RUN=1 ./GPU-Stress-Portable-x86_64.AppImage --diagnose
+APPIMAGE_EXTRACT_AND_RUN=1 ./GPU-Stress-JUCE-Backup-x86_64.AppImage
 ```
 
 ### Docker cannot see the GPU
@@ -329,14 +478,16 @@ Verify `nvidia-smi` on the host, then verify Docker GPU support with an NVIDIA C
 
 ## Contributing
 
-- Keep optional CUDA imports lazy so CPU-only tests remain usable.
-- Add unit coverage for scheduling, parsing, controller, portable defaults, and background-launcher changes.
+- Keep optional Python CUDA imports lazy so CPU-only tests remain usable.
+- Keep `native-juce` core logic independent from JUCE widgets so host-only C++ tests remain fast.
+- Add unit coverage for scheduling, parsing, controller, portable defaults, background-launcher, and engine-state changes.
 - Test packaging changes on both native operating systems.
-- Test the AppImage with `APPIMAGE_EXTRACT_AND_RUN=1` in CI.
+- Test both AppImages with extract-and-run mode in CI.
+- Keep JUCE licensing notices and the pinned JUCE version synchronized with release bundles.
 - Large behavioral changes should update the relevant guides and release notes.
 
 ---
 
 ## License
 
-MIT
+The repository's original source is MIT-licensed. The JUCE-based application includes JUCE under JUCE's separate dual-license terms; see `native-juce/THIRD_PARTY_NOTICES.md` and the bundled `JUCE-LICENSE.md` in JUCE releases.
