@@ -61,7 +61,7 @@ void cpuStressWorker(Map<String, Object> command) {
   final durationMicros = command['durationMicros']! as int;
   final windowMicros = command['windowMicros']! as int;
   final activeMicros = (windowMicros * load / 100).round();
-  final idleMicros = math.max(0, windowMicros - activeMicros);
+  final idleMicros = math.max(0, windowMicros - activeMicros).toInt();
   final total = Stopwatch()..start();
   var accumulator = 0.61803398875;
 
