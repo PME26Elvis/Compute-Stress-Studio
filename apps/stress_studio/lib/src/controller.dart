@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'model.dart';
@@ -40,9 +39,10 @@ final class StudioController extends ChangeNotifier {
       _state == StudioRunState.running ||
       _state == StudioRunState.stopping;
   double get progress => _configuration.duration.inMilliseconds == 0
-      ? 0
+      ? 0.0
       : (_elapsed.inMilliseconds / _configuration.duration.inMilliseconds)
-          .clamp(0, 1);
+          .clamp(0.0, 1.0)
+          .toDouble();
   Duration get remaining {
     final value = _configuration.duration - _elapsed;
     return value.isNegative ? Duration.zero : value;
