@@ -1,164 +1,147 @@
 # Architecture and development
 
-This document describes the current repository as a whole. Subsystem guides cover operator details; this file explains boundaries, contracts, and validation.
+This document describes the repository-wide boundaries, contracts, and validation policy.
 
 ## Repository architecture
 
 ```text
-Compute Stress Studio repository
+Compute Stress Studio
 |
-+-- apps/stress_studio/       Flutter CPU+GPU control plane
-|   +-- Dart isolate CPU adapter
-|   +-- external JUCE GPU adapter
++-- apps/stress_studio/       Flutter Material 3 control plane
+|   +-- ProcessCpuStressService
+|   +-- JuceGpuWorkerService
+|
++-- native-cpu/               silent low-priority C++20 CPU worker
 |
 +-- native-juce/              C++20/JUCE CUDA WaveMix engine
-|   +-- GUI/tray application
-|   +-- silent CLI
-|   +-- hidden background executable
+|   +-- standalone GUI/tray, CLI, and hidden modes
+|   +-- embedded Flutter GPU worker
 |
 +-- gpu_stress_cli.py         adaptive Python NVIDIA CLI
-|   +-- NVML / nvidia-smi / open-loop monitoring
-|   +-- PyTorch / CuPy / Numba compute backends
-|
-+-- packaging/                PyInstaller and AppImage delivery
++-- packaging/                Python portable/AppImage delivery
 +-- main.py + PyQt modules    original Linux CPU monitor
-+-- cpu_stress_cli.py         standalone CPU CLI
-+-- tests/                    Python and packaging tests
++-- cpu_stress_cli.py         standalone Python CPU CLI
++-- docs/                     product, operation, architecture, release notes
++-- release/                  audited product release requests
 ```
 
-The repository intentionally keeps multiple independent engines. They are not duplicate ports:
+The engines are deliberately independent:
 
-- Flutter is the modern orchestration and UX layer.
-- JUCE WaveMix is the native GPU worker and an independent fallback application.
-- The Python GPU CLI is the adaptive, telemetry-aware implementation.
-- The original CPU tools remain useful standalone utilities.
+- Flutter is the flagship orchestration and UX layer.
+- `native-cpu` protects Flutter responsiveness by owning CPU hot loops in a child process.
+- JUCE WaveMix is the native GPU worker and standalone fallback.
+- The Python GPU CLI is telemetry-aware and adaptive.
+- Original CPU tools remain standalone utilities.
 
 ## Flutter control plane
 
 ### Ownership and lifecycle
 
-`OwnedStressStudioApp` owns `StudioController` in production. Removing the root widget disposes the controller, which begins stopping CPU isolates and the GPU child process. The presentational `StressStudioApp` accepts an injected controller so widget tests can remain deterministic.
+`OwnedStressStudioApp` owns `StudioController`. Removing the root disposes the controller and immediately begins stopping both child processes. `StressStudioApp` remains independently testable with fake services.
 
-### State and transaction model
+### State and transactions
 
-`StudioController` owns:
+`StudioController` owns immutable configuration, idle/starting/running/stopping/completed/error states, elapsed time, bounded history, rollback, theme, and navigation state.
 
-- immutable `RunConfiguration`;
-- idle, starting, running, stopping, completed, and error states;
-- one coordinated duration and elapsed timer;
-- bounded in-memory history;
-- start rollback and idempotent stop;
-- theme and selected-page state.
-
-Start validates first, then starts enabled services together. Any startup failure stops both services before exposing the error. Configuration changes are rejected while active.
+Start validates configuration and launches enabled services together. Any startup failure stops both. Stop is idempotent. Configuration is locked while active.
 
 ### CPU service
 
-`IsolateCpuStressService` creates one Dart isolate per selected worker. Each isolate uses a short duty window with compute followed by sleep. The UI isolate never performs the hot loop, and `Isolate.kill(priority: Isolate.immediate)` provides bounded stop behavior.
-
-The target is a duty request, not a promise of total system utilization. OS scheduling, SMT topology, processor power policy, and other work affect measured results.
-
-### GPU service
-
-`JuceGpuWorkerService` expects the silent native worker beside the Flutter executable and passes:
+`ProcessCpuStressService` expects `Compute-Stress-CPU-Worker[.exe]` beside the Flutter executable and passes:
 
 ```text
 --duration <seconds>
 --load <percent>
---memory-mib <budget>
---device <index>
+--threads <1..64>
 ```
 
-The service drains child output, checks for early exit, requests graceful termination, and escalates to forced termination after timeout. The process boundary keeps CUDA failures and future backend replacement separate from the Flutter UI architecture.
+The child process boundary fixes the first preview's Windows responsiveness issue. The first implementation used one busy Dart isolate per selected processor. Work stayed off the UI isolate but still shared the Flutter process and could starve Windows message handling when every logical processor was active.
+
+The v0.2 CPU worker:
+
+- uses a Windows GUI-subsystem executable, so no console appears;
+- lowers itself to Below Normal priority on Windows;
+- uses a positive nice value on Linux;
+- creates native worker threads only inside the child process;
+- applies 50 ms duty windows;
+- exits silently and writes no files;
+- can be killed immediately by the controller;
+- has parser, scheduling, self-test, and early-stop native tests.
+
+Presets use `recommendedCpuThreadCount()`, which reserves one logical processor when possible. Users may still select the full processor count intentionally.
+
+### GPU service
+
+`JuceGpuWorkerService` expects `GPU-Stress-JUCE-Background[.exe]` beside Flutter and passes duration, load, VRAM budget, and device index. It drains output, detects early exit, terminates on Stop, and escalates after timeout.
+
+### Diagnostics
+
+`CapabilitySnapshot` exposes operating system, logical processor count, CPU worker path/readiness, and GPU worker path/readiness. Capability inspection never starts load.
+
+## Native CPU worker
+
+`native-cpu/` contains:
+
+```text
+CMakeLists.txt
+include/ComputeStressCpu/Config.h
+include/ComputeStressCpu/Engine.h
+src/Config.cpp
+src/Engine.cpp
+src/MainWindows.cpp
+src/MainPosix.cpp
+tests/CpuStressTests.cpp
+```
+
+The worker uses C++20 `std::jthread`. Each thread performs floating-point work during the active portion of a 50 ms window and sleeps until the next window boundary. A process-wide stop flag bounds shutdown latency.
+
+Windows builds use `WIN32` subsystem and link the static MSVC runtime in release bundles. POSIX builds handle SIGINT/SIGTERM.
 
 ## Native JUCE WaveMix engine
 
-The native implementation uses a calibrated CUDA WaveMix kernel with FP32 arithmetic, integer scrambling, and memory traffic. A measured active-time scheduler applies duty control over a fixed window.
+WaveMix uses calibrated CUDA launches combining FP32 arithmetic, integer scrambling, shared memory, and global memory traffic. Duty is based on active execution time rather than NVML PI feedback.
 
-Release builds include `sm_61` for the Quadro P2200 and selected newer architectures. The native application deliberately avoids recurring telemetry, log files, and `nvidia-smi` subprocesses during normal runs.
-
-Entry points:
-
-```text
-GPU-Stress-JUCE.exe                 GUI and notification-area app
-GPU-Stress-JUCE-Background.exe      hidden no-window application
-GPU-Stress-JUCE-CLI.exe             silent command-line application
-```
-
-On Linux the same roles are provided without the `.exe` suffix, subject to desktop tray support.
+Release builds include `sm_61` for the Quadro P2200 and selected newer architectures. Normal JUCE runs avoid recurring telemetry, log files, and `nvidia-smi` subprocesses.
 
 ## Adaptive Python GPU engine
 
-### Monitoring fallback
+The Python CLI retains three monitoring levels (NVML, `nvidia-smi`, open-loop) and three compute backends (PyTorch/cuBLAS, CuPy/cuBLAS, Numba kernel). Optional imports remain lazy so non-GPU tests and help work without CUDA frameworks.
 
-`make_monitor()` attempts:
-
-1. NVML through `nvidia-ml-py`;
-2. `nvidia-smi` CSV output;
-3. `NullMonitor` for open-loop duty control.
-
-### Compute fallback
-
-`make_backend()` attempts:
-
-1. PyTorch/cuBLAS;
-2. CuPy/cuBLAS;
-3. a Numba CUDA kernel.
-
-Optional CUDA frameworks are imported lazily so help, parsing, static checks, and CPU-only tests work on non-GPU runners.
-
-### Load control
-
-Each backend synchronizes before returning from a chunk. A work-credit accumulator preserves long-term duty behavior when one calibrated chunk is longer than an instantaneous budget. With utilization telemetry, an EMA-filtered PI controller corrects duty toward the device-wide target.
-
-### Memory policy
-
-The CLI preserves driver/display headroom, uses only a fraction of the requested budget for resident tensors, aligns matrix dimensions, reuses buffers, and retries smaller allocations after out-of-memory errors.
-
-## Portable Python distribution
-
-The portable worker intentionally forces CuPy rather than bundling all three Python GPU frameworks. This avoids duplicated CUDA runtimes and reduces platform-specific DLL/JIT failure modes.
-
-`gpu_stress_portable.py` applies packaged defaults only when the user omitted explicit values. Source `gpu_stress_cli.py` still requires an explicit duration so a source checkout never starts the 96-hour personal run unexpectedly.
-
-The Windows hidden launcher is a small GUI-subsystem executable that starts the larger one-folder worker detached and tracks one PID file. It uses stable executable names so a manual `taskkill` remains possible.
-
-## Original CPU applications
-
-- `main.py`, `main_window.py`, and `stress_test.py` implement the original Linux PyQt monitor/stress GUI.
-- `cpu_stress_cli.py` implements constant, pulsed, and ramp CPU load from the command line.
-
-These tools do not depend on Flutter or the NVIDIA GPU stack.
+Its portable release forces CuPy to avoid carrying multiple CUDA runtimes. This remains separate from the Flutter product release family.
 
 ## Release workflows
 
-### Flutter desktop
+### Compute Stress Studio
 
-`.github/workflows/flutter-stress-studio.yml` validates pull requests and pushes, builds both platform bundles, and uploads workflow artifacts. GitHub Release publication is manual and idempotent: an explicit dispatch chooses tag, title, notes file, and prerelease state.
+`.github/workflows/flutter-stress-studio.yml` performs:
 
-### Release-note maintenance
+1. release-request metadata validation;
+2. fast native CPU build and CTest;
+3. Flutter format/analyze/tests;
+4. Windows/Linux native CPU build and self-test;
+5. Windows/Linux JUCE CUDA build and tests;
+6. Windows/Linux Flutter release builds;
+7. worker injection and final bundle validation;
+8. checksums and optional release publication.
 
-`.github/workflows/release-notes-maintenance.yml` edits an existing GitHub Release from a versioned Markdown file without rebuilding assets. It is used for the corrected `stress-studio-v0.1.14` notes and can be dispatched for future note-only fixes.
+A normal push validates but does not publish. Publication requires either workflow dispatch or a changed JSON manifest under `release/compute-stress-studio/`.
 
-### Python GPU portable
+### Other release families
 
-`.github/workflows/release-gpu-packages.yml` builds Windows/Linux portable packages, AppImage, Docker/GHCR delivery, checksums, and release assets. It remains a separate channel because the runtime and artifact set differ from the Flutter desktop app.
+- `release-gpu-packages.yml`: Python/CuPy portable, AppImage, Docker/GHCR.
+- `release-juce-backup.yml`: standalone JUCE Windows/Linux/AppImage.
+- `release-notes-maintenance.yml`: note-only edits to an existing release.
 
-### Native JUCE
-
-The native workflow builds Windows and Linux entry points, exercises core/native tests, validates silent behavior and GUI/tray lifecycle where supported, and packages independent fallback releases.
-
-See [RELEASES.md](RELEASES.md) for the canonical artifact matrix.
+See [RELEASES.md](RELEASES.md).
 
 ## Local validation
 
-### Python
+### Native CPU
 
 ```bash
-python -m py_compile cpu_stress_cli.py gpu_stress_cli.py gpu_stress_portable.py gpu_stress_background.py
-python -m unittest discover -s tests -v
-python gpu_stress_cli.py --help
-python gpu_stress_portable.py --help
+cmake -S native-cpu -B build/cpu-worker -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/cpu-worker
+ctest --test-dir build/cpu-worker --output-on-failure
 ```
 
 ### Flutter
@@ -172,14 +155,7 @@ flutter analyze
 flutter test --coverage
 ```
 
-Build Windows on Windows and Linux on Linux:
-
-```bash
-flutter build windows --release
-flutter build linux --release
-```
-
-### Native core without CUDA/GUI
+### JUCE core without CUDA/GUI
 
 ```bash
 cmake -S native-juce -B build/juce-core \
@@ -190,28 +166,24 @@ cmake --build build/juce-core
 ctest --test-dir build/juce-core --output-on-failure
 ```
 
-### Physical GPU smoke test
+### Python
 
-CI cannot replace a target-machine test. On the intended NVIDIA system, validate discovery and low-load behavior before a long run. Monitor cooling and physical telemetry externally.
+```bash
+python -m py_compile cpu_stress_cli.py gpu_stress_cli.py gpu_stress_portable.py gpu_stress_background.py
+python -m unittest discover -s tests -v
+```
 
 ## Engineering rules
 
-- Keep CUDA imports lazy in Python modules used by CPU-only CI.
-- Never perform stress work on Flutter's UI isolate.
-- Keep the Flutter/native boundary explicit and replaceable.
-- Do not call requested load “measured utilization.”
-- Do not add recurring monitoring or file writes to the silent JUCE worker without changing its documented contract.
-- Preserve a manual stop path for every background workload.
-- Add a regression test for every lifecycle, rollback, parser, or packaging bug.
-- Version-specific release prose belongs in `docs/releases/`, not inline heredocs duplicated across workflows.
+- Never execute a stress hot loop in Flutter.
+- Keep CPU and GPU worker contracts explicit and replaceable.
+- Reserve scheduling capacity by default; full saturation must be an intentional user choice.
+- Do not call a requested target measured utilization.
+- Preserve manual and lifecycle stop paths for every workload.
+- Add regression tests for lifecycle, parser, process, and packaging bugs.
+- Keep version-specific release prose under `docs/releases/`.
+- Do not make ordinary documentation pushes publish releases.
 
-## Known limitations
+## Validation boundary
 
-- NVML utilization is device-wide and includes unrelated GPU work.
-- A utilization target is not a board-power target.
-- WDDM, clocks, power caps, cooling, and throttling change observed behavior.
-- Flutter v0.1 does not expose physical telemetry or persistent history.
-- Portable Linux binaries can encounter host glibc compatibility differences.
-- AppImage may need extract-and-run mode where FUSE is unavailable.
-- Existing GHCR images and release artifacts keep legacy names until users migrate.
-- This repository creates load; it is not a dedicated CPU/GPU memory error detector or hardware certification suite.
+CI validates source, tests, native builds, Flutter builds, archive composition, and worker startup paths that do not require a physical GPU. It does not prove sustained GPU utilization, thermals, fan behavior, power, clocks, or target-machine stability.
