@@ -1,0 +1,76 @@
+name: Patch Flutter product copy
+
+on:
+  push:
+    branches: [agent/fix-flutter-ui-responsiveness]
+    paths:
+      - .github/workflows/patch-flutter-product-copy.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-flutter-ui-responsiveness
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+      - name: Apply focused source replacements
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('apps/stress_studio/lib/src/studio_app.dart')
+          text = path.read_text(encoding='utf-8')
+          replacements = {
+              "title: 'Stress Studio'": "title: 'Compute Stress Studio'",
+              "Flutter owns the adaptive desktop experience. Isolates and the silent JUCE WaveMix worker own the workloads.": "Flutter stays responsive while dedicated low-priority CPU and JUCE CUDA worker processes own the workloads.",
+              "'${controller.configuration.cpuThreads} isolate workers'": "'${controller.configuration.cpuThreads} low-priority threads'",
+              "subtitle: 'Dart isolate workers with a short duty-cycle window'": "subtitle: 'Bundled low-priority CPU worker process'",
+              "label: 'Worker isolates'": "label: 'CPU worker threads'",
+              "'CPU uses killable isolates; GPU uses the bundled silent JUCE background executable.'": "'CPU and GPU run in separate bundled worker processes so the Flutter window remains responsive.'",
+              "'Stress Studio'": "'Compute Stress Studio'",
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'missing expected source text: {old}')
+              text = text.replace(old, new)
+
+          gpu_tile = """          _DiagnosticTile(
+            icon: Icons.developer_board_rounded,
+            title: 'Bundled GPU worker',
+            value: capabilities.gpuWorkerPath,
+            ok: capabilities.gpuWorkerAvailable,
+          ),
+"""
+          worker_tiles = """          _DiagnosticTile(
+            icon: Icons.memory_rounded,
+            title: 'Bundled CPU worker',
+            value: capabilities.cpuWorkerPath,
+            ok: capabilities.cpuWorkerAvailable,
+          ),
+          _DiagnosticTile(
+            icon: Icons.developer_board_rounded,
+            title: 'Bundled GPU worker',
+            value: capabilities.gpuWorkerPath,
+            ok: capabilities.gpuWorkerAvailable,
+          ),
+"""
+          if gpu_tile not in text:
+              raise SystemExit('missing expected GPU diagnostic tile')
+          text = text.replace(gpu_tile, worker_tiles, 1)
+          path.write_text(text, encoding='utf-8')
+      - name: Format and commit
+        run: |
+          dart format apps/stress_studio/lib/src/studio_app.dart
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/stress_studio/lib/src/studio_app.dart
+          git commit -m "Update Flutter UI for external CPU worker"
+          git push origin HEAD:agent/fix-flutter-ui-responsiveness
