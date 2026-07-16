@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(GPUStressJUCEBackup VERSION 1.0.0 LANGUAGES C CXX)
+project(GPUStressJUCEBackup VERSION 1.1.0 LANGUAGES C CXX)
 
 option(GPU_STRESS_ENABLE_CUDA "Build the real CUDA WaveMix backend" ON)
 option(GPU_STRESS_BUILD_GUI "Build the JUCE GUI and hidden background application" ON)
@@ -25,10 +25,8 @@ endif()
 add_library(gpu_stress_backup_core STATIC
     src/AppConfig.cpp
     src/DutyScheduler.cpp
-    src/RunLogger.cpp
     src/StressEngine.cpp
     src/SyntheticStressBackend.cpp
-    src/NvidiaSmiTelemetry.cpp
 )
 
 target_include_directories(gpu_stress_backup_core PUBLIC include)
@@ -111,7 +109,6 @@ if(GPU_STRESS_BUILD_TESTS)
         tests/TestMain.cpp
         tests/AppConfigTests.cpp
         tests/DutySchedulerTests.cpp
-        tests/RunLoggerTests.cpp
         tests/StressEngineTests.cpp
     )
     target_include_directories(GPUStressJUCETests PRIVATE include tests)
