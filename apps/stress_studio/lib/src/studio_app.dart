@@ -17,7 +17,7 @@ final class StressStudioApp extends StatelessWidget {
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: controller,
     builder: (context, _) => MaterialApp(
-      title: 'Stress Studio',
+      title: 'Compute Stress Studio',
       debugShowCheckedModeBanner: false,
       theme: StudioTheme.light(),
       darkTheme: StudioTheme.dark(),
@@ -40,6 +40,7 @@ final class StudioShell extends StatelessWidget {
       DiagnosticsPage(controller: controller),
       SettingsPage(controller: controller),
     ];
+
     return Shortcuts(
       shortcuts: const <ShortcutActivator, Intent>{
         SingleActivator(LogicalKeyboardKey.enter, control: true):
@@ -65,8 +66,8 @@ final class StudioShell extends StatelessWidget {
           autofocus: true,
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 1100;
               final compact = constraints.maxWidth < 760;
+              final expandedRail = constraints.maxWidth >= 1120;
               final content = AnimatedSwitcher(
                 duration: const Duration(milliseconds: 220),
                 child: KeyedSubtree(
@@ -74,65 +75,33 @@ final class StudioShell extends StatelessWidget {
                   child: pages[controller.selectedPage],
                 ),
               );
+
               if (compact) {
                 return Scaffold(
                   body: SafeArea(child: content),
                   bottomNavigationBar: NavigationBar(
                     selectedIndex: controller.selectedPage,
                     onDestinationSelected: controller.selectPage,
-                    destinations: const <NavigationDestination>[
-                      NavigationDestination(
-                        icon: Icon(Icons.dashboard_rounded),
-                        label: 'Dashboard',
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.tune_rounded),
-                        label: 'Presets',
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.monitor_heart_rounded),
-                        label: 'Diagnostics',
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.settings_rounded),
-                        label: 'Settings',
-                      ),
-                    ],
+                    destinations: _navigationDestinations,
                   ),
                 );
               }
+
               return Scaffold(
                 body: Row(
                   children: <Widget>[
                     NavigationRail(
-                      extended: wide,
-                      minExtendedWidth: 220,
+                      extended: expandedRail,
+                      minExtendedWidth: 232,
                       selectedIndex: controller.selectedPage,
                       onDestinationSelected: controller.selectPage,
                       leading: Padding(
-                        padding: const EdgeInsets.only(top: 20, bottom: 18),
-                        child: wide
+                        padding: const EdgeInsets.fromLTRB(18, 22, 18, 20),
+                        child: expandedRail
                             ? const _BrandLockup()
                             : const Icon(Icons.speed_rounded, size: 30),
                       ),
-                      destinations: const <NavigationRailDestination>[
-                        NavigationRailDestination(
-                          icon: Icon(Icons.dashboard_rounded),
-                          label: Text('Dashboard'),
-                        ),
-                        NavigationRailDestination(
-                          icon: Icon(Icons.tune_rounded),
-                          label: Text('Presets'),
-                        ),
-                        NavigationRailDestination(
-                          icon: Icon(Icons.monitor_heart_rounded),
-                          label: Text('Diagnostics'),
-                        ),
-                        NavigationRailDestination(
-                          icon: Icon(Icons.settings_rounded),
-                          label: Text('Settings'),
-                        ),
-                      ],
+                      destinations: _railDestinations,
                     ),
                     const VerticalDivider(width: 1),
                     Expanded(child: SafeArea(child: content)),
@@ -146,6 +115,38 @@ final class StudioShell extends StatelessWidget {
     );
   }
 }
+
+const _navigationDestinations = <NavigationDestination>[
+  NavigationDestination(
+    icon: Icon(Icons.dashboard_rounded),
+    label: 'Dashboard',
+  ),
+  NavigationDestination(icon: Icon(Icons.tune_rounded), label: 'Presets'),
+  NavigationDestination(
+    icon: Icon(Icons.fact_check_rounded),
+    label: 'Diagnostics',
+  ),
+  NavigationDestination(icon: Icon(Icons.settings_rounded), label: 'Settings'),
+];
+
+const _railDestinations = <NavigationRailDestination>[
+  NavigationRailDestination(
+    icon: Icon(Icons.dashboard_rounded),
+    label: Text('Dashboard'),
+  ),
+  NavigationRailDestination(
+    icon: Icon(Icons.tune_rounded),
+    label: Text('Presets'),
+  ),
+  NavigationRailDestination(
+    icon: Icon(Icons.fact_check_rounded),
+    label: Text('Diagnostics'),
+  ),
+  NavigationRailDestination(
+    icon: Icon(Icons.settings_rounded),
+    label: Text('Settings'),
+  ),
+];
 
 final class StartRunIntent extends Intent {
   const StartRunIntent();
@@ -167,6 +168,13 @@ final class DashboardPage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(28, 24, 28, 12),
         sliver: SliverToBoxAdapter(child: _HeroPanel(controller: controller)),
       ),
+      if (controller.error != null)
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 8),
+          sliver: SliverToBoxAdapter(
+            child: _ErrorBanner(message: controller.error!),
+          ),
+        ),
       SliverPadding(
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
         sliver: SliverToBoxAdapter(child: _StatusGrid(controller: controller)),
@@ -176,10 +184,9 @@ final class DashboardPage extends StatelessWidget {
         sliver: SliverToBoxAdapter(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final stack = constraints.maxWidth < 980;
               final composer = WorkloadComposer(controller: controller);
               final activity = ActivityPanel(controller: controller);
-              if (stack) {
+              if (constraints.maxWidth < 980) {
                 return Column(
                   children: <Widget>[
                     composer,
@@ -224,20 +231,24 @@ final class _HeroPanel extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compact = constraints.maxWidth < 700;
           final copy = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Row(
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
                   _StatePill(state: controller.state),
-                  const SizedBox(width: 10),
-                  Text(controller.configuration.presetName),
+                  Text(
+                    controller.configuration.presetName,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ],
               ),
               const SizedBox(height: 18),
               Text(
-                'Coordinate CPU + GPU stress\nfrom one modern control plane.',
+                'CPU + GPU stress without\nfreezing the control plane.',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.w800,
                   height: 1.08,
@@ -245,11 +256,12 @@ final class _HeroPanel extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                'Flutter owns the adaptive desktop experience. Isolates and the silent JUCE WaveMix worker own the workloads.',
+                'Flutter stays responsive while dedicated low-priority CPU and JUCE CUDA worker processes own the workloads.',
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
             ],
           );
+
           final actions = Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -270,7 +282,8 @@ final class _HeroPanel extends StatelessWidget {
               ),
             ],
           );
-          if (compact) {
+
+          if (constraints.maxWidth < 720) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[copy, const SizedBox(height: 24), actions],
@@ -297,46 +310,40 @@ final class _StatusGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final width = constraints.maxWidth;
-      final columns = width > 1050
+      final columns = constraints.maxWidth > 1050
           ? 4
-          : width > 620
+          : constraints.maxWidth > 620
           ? 2
           : 1;
-      final cardWidth = (width - (columns - 1) * 14) / columns;
+      final width = (constraints.maxWidth - (columns - 1) * 14) / columns;
+      final config = controller.configuration;
       return Wrap(
         spacing: 14,
         runSpacing: 14,
         children: <Widget>[
           _MetricCard(
-            width: cardWidth,
+            width: width,
             icon: Icons.timer_outlined,
             label: 'Elapsed',
             value: _formatDuration(controller.elapsed),
-            detail:
-                '${(controller.progress * 100).toStringAsFixed(1)}% of session',
+            detail: '${(controller.progress * 100).toStringAsFixed(1)}% of session',
           ),
           _MetricCard(
-            width: cardWidth,
+            width: width,
             icon: Icons.memory_rounded,
             label: 'CPU target',
-            value: controller.configuration.cpuEnabled
-                ? '${controller.configuration.cpuLoadPercent.round()}%'
-                : 'Off',
-            detail: '${controller.configuration.cpuThreads} isolate workers',
+            value: config.cpuEnabled ? '${config.cpuLoadPercent.round()}%' : 'Off',
+            detail: '${config.cpuThreads} low-priority threads',
           ),
           _MetricCard(
-            width: cardWidth,
+            width: width,
             icon: Icons.developer_board_rounded,
             label: 'GPU target',
-            value: controller.configuration.gpuEnabled
-                ? '${controller.configuration.gpuLoadPercent.round()}%'
-                : 'Off',
-            detail:
-                '${controller.configuration.gpuMemoryMiB} MiB WaveMix budget',
+            value: config.gpuEnabled ? '${config.gpuLoadPercent.round()}%' : 'Off',
+            detail: '${config.gpuMemoryMiB} MiB WaveMix budget',
           ),
           _MetricCard(
-            width: cardWidth,
+            width: width,
             icon: Icons.schedule_rounded,
             label: 'Remaining',
             value: _formatDuration(controller.remaining),
@@ -356,6 +363,7 @@ final class WorkloadComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final config = controller.configuration;
+    final processors = math.max(1, controller.capabilities.logicalProcessors);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -364,20 +372,20 @@ final class WorkloadComposer extends StatelessWidget {
           children: <Widget>[
             Text(
               'Workload composer',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
-              'Changes lock while a session is active.',
+              'Settings lock while a session is active. Presets reserve one logical processor by default.',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 24),
             _WorkloadSection(
               icon: Icons.memory_rounded,
               title: 'CPU engine',
-              subtitle: 'Dart isolate workers with a short duty-cycle window',
+              subtitle: 'Bundled low-priority CPU worker process',
               enabled: config.cpuEnabled,
               onEnabled: controller.isActive
                   ? null
@@ -386,7 +394,7 @@ final class WorkloadComposer extends StatelessWidget {
                     ),
               children: <Widget>[
                 _LabeledSlider(
-                  label: 'Target load',
+                  label: 'Target duty load',
                   valueLabel: '${config.cpuLoadPercent.round()}%',
                   value: config.cpuLoadPercent,
                   min: 0,
@@ -399,17 +407,15 @@ final class WorkloadComposer extends StatelessWidget {
                         ),
                 ),
                 _LabeledSlider(
-                  label: 'Worker isolates',
+                  label: 'CPU worker threads',
                   valueLabel: '${config.cpuThreads}',
-                  value: config.cpuThreads.toDouble(),
-                  min: 1,
-                  max: math
-                      .max(2, controller.capabilities.logicalProcessors)
-                      .toDouble(),
-                  divisions: math.max(
+                  value: config.cpuThreads.toDouble().clamp(
                     1,
-                    controller.capabilities.logicalProcessors - 1,
+                    math.max(1, processors).toDouble(),
                   ),
+                  min: 1,
+                  max: math.max(2, processors).toDouble(),
+                  divisions: math.max(1, processors - 1),
                   onChanged: controller.isActive
                       ? null
                       : (value) => controller.updateConfiguration(
@@ -444,63 +450,97 @@ final class WorkloadComposer extends StatelessWidget {
                         ),
                 ),
                 _LabeledSlider(
-                  label: 'VRAM budget',
+                  label: 'WaveMix VRAM budget',
                   valueLabel: '${config.gpuMemoryMiB} MiB',
                   value: config.gpuMemoryMiB.toDouble(),
                   min: 32,
                   max: 1024,
-                  divisions: 62,
+                  divisions: 31,
                   onChanged: controller.isActive
                       ? null
                       : (value) => controller.updateConfiguration(
                           config.copyWith(
-                            gpuMemoryMiB: (value / 16).round() * 16,
+                            gpuMemoryMiB: (value / 32).round() * 32,
                           ),
+                        ),
+                ),
+                _LabeledSlider(
+                  label: 'CUDA device index',
+                  valueLabel: '${config.gpuDeviceIndex}',
+                  value: config.gpuDeviceIndex.toDouble(),
+                  min: 0,
+                  max: 7,
+                  divisions: 7,
+                  onChanged: controller.isActive
+                      ? null
+                      : (value) => controller.updateConfiguration(
+                          config.copyWith(gpuDeviceIndex: value.round()),
                         ),
                 ),
               ],
             ),
             const Divider(height: 40),
             Text(
-              'Session length',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              'Session duration',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 10,
               runSpacing: 10,
-              children:
-                  <Duration>[
-                    const Duration(minutes: 2),
-                    const Duration(minutes: 30),
-                    const Duration(hours: 1),
-                    const Duration(hours: 8),
-                    const Duration(hours: 24),
-                    const Duration(hours: 96),
-                  ].map((duration) {
-                    final selected = config.duration == duration;
-                    return ChoiceChip(
-                      label: Text(_formatDuration(duration)),
-                      selected: selected,
-                      onSelected: controller.isActive
-                          ? null
-                          : (_) => controller.updateConfiguration(
-                              config.copyWith(duration: duration),
-                            ),
-                    );
-                  }).toList(),
+              children: <Widget>[
+                _DurationChoice(
+                  label: '2 min',
+                  duration: const Duration(minutes: 2),
+                  controller: controller,
+                ),
+                _DurationChoice(
+                  label: '30 min',
+                  duration: const Duration(minutes: 30),
+                  controller: controller,
+                ),
+                _DurationChoice(
+                  label: '1 hour',
+                  duration: const Duration(hours: 1),
+                  controller: controller,
+                ),
+                _DurationChoice(
+                  label: '96 hours',
+                  duration: const Duration(hours: 96),
+                  controller: controller,
+                ),
+              ],
             ),
-            if (controller.error != null) ...<Widget>[
-              const SizedBox(height: 20),
-              _InlineError(message: controller.error!),
-            ],
           ],
         ),
       ),
     );
   }
+}
+
+final class _DurationChoice extends StatelessWidget {
+  const _DurationChoice({
+    required this.label,
+    required this.duration,
+    required this.controller,
+  });
+
+  final String label;
+  final Duration duration;
+  final StudioController controller;
+
+  @override
+  Widget build(BuildContext context) => ChoiceChip(
+    label: Text(label),
+    selected: controller.configuration.duration == duration,
+    onSelected: controller.isActive
+        ? null
+        : (_) => controller.updateConfiguration(
+            controller.configuration.copyWith(duration: duration),
+          ),
+  );
 }
 
 final class ActivityPanel extends StatelessWidget {
@@ -516,81 +556,78 @@ final class ActivityPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            'Live command view',
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            'Session control',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
           ),
-          const SizedBox(height: 6),
-          const Text(
-            'Targets and worker lifecycle; use your preferred external telemetry monitor for physical readings.',
+          const SizedBox(height: 18),
+          _WorkerReadiness(
+            label: 'CPU worker',
+            ready: controller.capabilities.cpuWorkerAvailable,
+          ),
+          const SizedBox(height: 10),
+          _WorkerReadiness(
+            label: 'GPU worker',
+            ready: controller.capabilities.gpuWorkerAvailable,
+          ),
+          const SizedBox(height: 20),
+          LinearProgressIndicator(value: controller.progress),
+          const SizedBox(height: 12),
+          Text(
+            controller.isActive
+                ? 'Both workers remain external to Flutter, keeping this control surface schedulable.'
+                : 'Ready for a coordinated session.',
           ),
           const SizedBox(height: 24),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: _Gauge(
-                  label: 'CPU',
-                  value: controller.configuration.cpuEnabled
-                      ? controller.configuration.cpuLoadPercent / 100
-                      : 0,
-                  centre: controller.configuration.cpuEnabled
-                      ? '${controller.configuration.cpuLoadPercent.round()}%'
-                      : 'Off',
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: _Gauge(
-                  label: 'GPU',
-                  value: controller.configuration.gpuEnabled
-                      ? controller.configuration.gpuLoadPercent / 100
-                      : 0,
-                  centre: controller.configuration.gpuEnabled
-                      ? '${controller.configuration.gpuLoadPercent.round()}%'
-                      : 'Off',
-                ),
-              ),
-            ],
+          Text(
+            'Recent sessions',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          const SizedBox(height: 28),
-          LinearProgressIndicator(value: controller.progress),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: <Widget>[
-              Text(_formatDuration(controller.elapsed)),
-              Text(_formatDuration(controller.configuration.duration)),
-            ],
-          ),
-          const SizedBox(height: 26),
-          _ActivityRow(
-            icon: Icons.layers_rounded,
-            label: 'Preset',
-            value: controller.configuration.presetName,
-          ),
-          _ActivityRow(
-            icon: Icons.memory_rounded,
-            label: 'CPU workers',
-            value: '${controller.configuration.cpuThreads}',
-          ),
-          _ActivityRow(
-            icon: Icons.developer_board_rounded,
-            label: 'GPU device',
-            value: '${controller.configuration.gpuDeviceIndex}',
-          ),
-          _ActivityRow(
-            icon: controller.capabilities.gpuWorkerAvailable
-                ? Icons.check_circle_rounded
-                : Icons.error_outline_rounded,
-            label: 'GPU worker',
-            value: controller.capabilities.gpuWorkerAvailable
-                ? 'Bundled'
-                : 'Missing',
-          ),
+          if (controller.history.isEmpty)
+            const Text('No completed or stopped sessions in this app session.')
+          else
+            ...controller.history.take(5).map(
+              (record) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading: Icon(
+                  record.completed
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.stop_circle_outlined,
+                ),
+                title: Text(record.configuration.presetName),
+                subtitle: Text(_formatDuration(record.elapsed)),
+              ),
+            ),
         ],
       ),
     ),
+  );
+}
+
+final class _WorkerReadiness extends StatelessWidget {
+  const _WorkerReadiness({required this.label, required this.ready});
+
+  final String label;
+  final bool ready;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: <Widget>[
+      Icon(
+        ready ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+        color: ready
+            ? StudioTheme.accent
+            : Theme.of(context).colorScheme.error,
+      ),
+      const SizedBox(width: 10),
+      Expanded(child: Text(label)),
+      Text(ready ? 'Ready' : 'Missing'),
+    ],
   );
 }
 
@@ -599,94 +636,93 @@ final class PresetsPage extends StatelessWidget {
 
   final StudioController controller;
 
+  static const presets = <(StudioPreset, String, String, IconData)>[
+    (
+      StudioPreset.quickCheck,
+      'Quick check',
+      '2 minutes at 25% CPU and GPU. Use this first.',
+      Icons.flash_on_rounded,
+    ),
+    (
+      StudioPreset.balanced,
+      'Balanced',
+      '1 hour with moderate CPU and GPU targets.',
+      Icons.balance_rounded,
+    ),
+    (
+      StudioPreset.cpuValidation,
+      'CPU validation',
+      '30 minutes of CPU-only loading.',
+      Icons.memory_rounded,
+    ),
+    (
+      StudioPreset.gpuValidation,
+      'GPU validation',
+      '30 minutes at the personalized 87% GPU duty target.',
+      Icons.developer_board_rounded,
+    ),
+    (
+      StudioPreset.endurance,
+      '96-hour endurance',
+      'Long coordinated run. Validate cooling first.',
+      Icons.timelapse_rounded,
+    ),
+  ];
+
   @override
-  Widget build(BuildContext context) {
-    final presets = <(StudioPreset, String, String, IconData)>[
-      (
-        StudioPreset.quickCheck,
-        'Quick check',
-        'Two minutes at 25% on CPU and GPU.',
-        Icons.bolt_rounded,
-      ),
-      (
-        StudioPreset.balanced,
-        'Balanced',
-        'A one-hour mixed compute validation.',
-        Icons.balance_rounded,
-      ),
-      (
-        StudioPreset.cpuValidation,
-        'CPU validation',
-        'Thirty minutes at 85% across logical processors.',
-        Icons.memory_rounded,
-      ),
-      (
-        StudioPreset.gpuValidation,
-        'GPU validation',
-        'Thirty minutes at the P2200-oriented 87% target.',
-        Icons.developer_board_rounded,
-      ),
-      (
-        StudioPreset.endurance,
-        '96-hour endurance',
-        'Long-duration mixed load with conservative CPU duty.',
-        Icons.all_inclusive_rounded,
-      ),
-    ];
-    return _PageFrame(
-      title: 'Presets',
-      subtitle: 'Opinionated starting points remain editable on the dashboard.',
-      child: LayoutBuilder(
-        builder: (context, constraints) => GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: constraints.maxWidth > 1000
-                ? 3
-                : constraints.maxWidth > 620
-                ? 2
-                : 1,
-            mainAxisSpacing: 16,
-            crossAxisSpacing: 16,
-            childAspectRatio: 1.45,
-          ),
-          itemCount: presets.length,
-          itemBuilder: (context, index) {
-            final preset = presets[index];
-            return Card(
-              child: InkWell(
-                borderRadius: BorderRadius.circular(24),
-                onTap: controller.isActive
-                    ? null
-                    : () {
-                        controller.applyPreset(preset.$1);
-                        controller.selectPage(0);
-                      },
-                child: Padding(
-                  padding: const EdgeInsets.all(22),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Icon(preset.$4, size: 30),
-                      const Spacer(),
-                      Text(
-                        preset.$2,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
+  Widget build(BuildContext context) => _PageFrame(
+    title: 'Presets',
+    subtitle: 'Apply a known starting point, then review it on the Dashboard.',
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth > 1050
+            ? 3
+            : constraints.maxWidth > 620
+            ? 2
+            : 1;
+        final width = (constraints.maxWidth - (columns - 1) * 16) / columns;
+        return Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: presets
+              .map(
+                (preset) => SizedBox(
+                  width: width,
+                  child: Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: controller.isActive
+                          ? null
+                          : () {
+                              controller.applyPreset(preset.$1);
+                              controller.selectPage(0);
+                            },
+                      child: Padding(
+                        padding: const EdgeInsets.all(22),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Icon(preset.$4, size: 30),
+                            const SizedBox(height: 24),
+                            Text(
+                              preset.$2,
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(preset.$3),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(preset.$3),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
+              )
+              .toList(),
+        );
+      },
+    ),
+  );
 }
 
 final class DiagnosticsPage extends StatelessWidget {
@@ -699,8 +735,7 @@ final class DiagnosticsPage extends StatelessWidget {
     final capabilities = controller.capabilities;
     return _PageFrame(
       title: 'Diagnostics',
-      subtitle:
-          'Capability checks are intentionally separate from workload controls.',
+      subtitle: 'Capability checks do not start a workload.',
       child: Column(
         children: <Widget>[
           _DiagnosticTile(
@@ -716,6 +751,12 @@ final class DiagnosticsPage extends StatelessWidget {
             ok: capabilities.logicalProcessors > 0,
           ),
           _DiagnosticTile(
+            icon: Icons.speed_rounded,
+            title: 'Bundled CPU worker',
+            value: capabilities.cpuWorkerPath,
+            ok: capabilities.cpuWorkerAvailable,
+          ),
+          _DiagnosticTile(
             icon: Icons.developer_board_rounded,
             title: 'Bundled GPU worker',
             value: capabilities.gpuWorkerPath,
@@ -725,7 +766,7 @@ final class DiagnosticsPage extends StatelessWidget {
             icon: Icons.shield_outlined,
             title: 'Monitoring policy',
             value:
-                'Stress Studio does not poll nvidia-smi or write telemetry files. External monitoring remains recommended.',
+                'Compute Stress Studio does not poll nvidia-smi or write telemetry files. Use an external monitor for physical readings.',
             ok: true,
           ),
         ],
@@ -742,8 +783,7 @@ final class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => _PageFrame(
     title: 'Settings',
-    subtitle:
-        'Local presentation preferences. Workload settings live on the dashboard.',
+    subtitle: 'Presentation preferences and execution policy.',
     child: Card(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -771,19 +811,27 @@ final class SettingsPage extends StatelessWidget {
               onSelectionChanged: (value) =>
                   controller.setThemeMode(value.first),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 22),
             const ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.keyboard_rounded),
               title: Text('Keyboard controls'),
-              subtitle: Text('Ctrl+Enter starts a session. Escape stops it.'),
+              subtitle: Text('Ctrl+Enter starts. Escape stops.'),
             ),
             const ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.architecture_rounded),
+              leading: Icon(Icons.account_tree_rounded),
               title: Text('Execution boundary'),
               subtitle: Text(
-                'CPU uses killable isolates; GPU uses the bundled silent JUCE background executable.',
+                'CPU and GPU run in separate bundled worker processes so the Flutter window remains responsive.',
+              ),
+            ),
+            const ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.low_priority_rounded),
+              title: Text('Responsiveness guard'),
+              subtitle: Text(
+                'Presets reserve one logical processor and the CPU worker lowers its OS priority. Full-thread loading remains an explicit choice.',
               ),
             ),
           ],
@@ -807,22 +855,24 @@ final class _PageFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
     padding: const EdgeInsets.all(28),
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 1320),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            title,
-            style: Theme.of(
-              context,
-            ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 6),
-          Text(subtitle, style: Theme.of(context).textTheme.bodyLarge),
-          const SizedBox(height: 26),
-          child,
-        ],
+    child: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1320),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              title,
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(subtitle, style: Theme.of(context).textTheme.bodyLarge),
+            const SizedBox(height: 26),
+            child,
+          ],
+        ),
       ),
     ),
   );
@@ -833,15 +883,15 @@ final class _BrandLockup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Padding(
-    padding: EdgeInsets.symmetric(horizontal: 18),
+    padding: EdgeInsets.symmetric(horizontal: 10),
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Icon(Icons.speed_rounded, size: 28),
         SizedBox(width: 10),
         Text(
-          'Stress Studio',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          'Compute Stress Studio',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
       ],
     ),
@@ -1001,11 +1051,11 @@ final class _LabeledSlider extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: <Widget>[
-            Text(label),
+            Expanded(child: Text(label)),
             Text(
               valueLabel,
               style: const TextStyle(fontWeight: FontWeight.w700),
@@ -1013,151 +1063,12 @@ final class _LabeledSlider extends StatelessWidget {
           ],
         ),
         Slider(
-          value: value.clamp(min, max).toDouble(),
+          value: value.clamp(min, max),
           min: min,
           max: max,
           divisions: divisions,
           onChanged: onChanged,
         ),
-      ],
-    ),
-  );
-}
-
-final class _Gauge extends StatelessWidget {
-  const _Gauge({
-    required this.label,
-    required this.value,
-    required this.centre,
-  });
-
-  final String label;
-  final double value;
-  final String centre;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    children: <Widget>[
-      AspectRatio(
-        aspectRatio: 1,
-        child: CustomPaint(
-          painter: _GaugePainter(
-            progress: value,
-            track: Theme.of(context).colorScheme.surfaceContainerHighest,
-            active: Theme.of(context).colorScheme.primary,
-          ),
-          child: Center(
-            child: Text(
-              centre,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-            ),
-          ),
-        ),
-      ),
-      const SizedBox(height: 8),
-      Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-    ],
-  );
-}
-
-final class _GaugePainter extends CustomPainter {
-  const _GaugePainter({
-    required this.progress,
-    required this.track,
-    required this.active,
-  });
-
-  final double progress;
-  final Color track;
-  final Color active;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final stroke = size.shortestSide * 0.09;
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = stroke;
-    paint.color = track;
-    canvas.drawArc(
-      rect.deflate(stroke),
-      -math.pi * 0.75,
-      math.pi * 1.5,
-      false,
-      paint,
-    );
-    paint.color = active;
-    canvas.drawArc(
-      rect.deflate(stroke),
-      -math.pi * 0.75,
-      math.pi * 1.5 * progress.clamp(0, 1).toDouble(),
-      false,
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _GaugePainter oldDelegate) =>
-      oldDelegate.progress != progress ||
-      oldDelegate.track != track ||
-      oldDelegate.active != active;
-}
-
-final class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
-      children: <Widget>[
-        Icon(icon, size: 20),
-        const SizedBox(width: 10),
-        Expanded(child: Text(label)),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.end,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-final class _InlineError extends StatelessWidget {
-  const _InlineError({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.errorContainer,
-      borderRadius: BorderRadius.circular(16),
-    ),
-    child: Row(
-      children: <Widget>[
-        Icon(
-          Icons.error_outline_rounded,
-          color: Theme.of(context).colorScheme.onErrorContainer,
-        ),
-        const SizedBox(width: 12),
-        Expanded(child: Text(message)),
       ],
     ),
   );
@@ -1178,34 +1089,49 @@ final class _DiagnosticTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-    margin: const EdgeInsets.only(bottom: 14),
     child: ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       leading: CircleAvatar(child: Icon(icon)),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      title: Text(title),
       subtitle: Text(value),
       trailing: Icon(
-        ok ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
-        color: ok ? StudioTheme.accent : StudioTheme.warning,
+        ok ? Icons.check_circle_rounded : Icons.error_rounded,
+        color: ok ? StudioTheme.accent : Theme.of(context).colorScheme.error,
       ),
     ),
   );
 }
 
-String _formatDuration(Duration duration) {
-  final totalSeconds = math.max(0, duration.inSeconds);
-  final days = totalSeconds ~/ 86400;
-  final hours = (totalSeconds % 86400) ~/ 3600;
-  final minutes = (totalSeconds % 3600) ~/ 60;
-  final seconds = totalSeconds % 60;
-  if (days > 0) {
-    return '${days}d ${hours}h';
-  }
+final class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    color: Theme.of(context).colorScheme.errorContainer,
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Row(
+        children: <Widget>[
+          Icon(
+            Icons.error_outline_rounded,
+            color: Theme.of(context).colorScheme.onErrorContainer,
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Text(message)),
+        ],
+      ),
+    ),
+  );
+}
+
+String _formatDuration(Duration value) {
+  final hours = value.inHours;
+  final minutes = value.inMinutes.remainder(60);
+  final seconds = value.inSeconds.remainder(60);
   if (hours > 0) {
-    return '${hours}h ${minutes}m';
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
-  if (minutes > 0) {
-    return '${minutes}m ${seconds}s';
-  }
-  return '${seconds}s';
+  return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 }
