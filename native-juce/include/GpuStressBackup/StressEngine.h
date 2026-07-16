@@ -2,10 +2,8 @@
 
 #include "GpuStressBackup/AppConfig.h"
 #include "GpuStressBackup/StressBackend.h"
-#include "GpuStressBackup/Telemetry.h"
 
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -14,13 +12,10 @@
 
 namespace gpu_stress_backup {
 
-class RunLogger;
-
 enum class EngineState {
     Idle,
     Initializing,
     Running,
-    ThermalPause,
     Stopping,
     Completed,
     Error
@@ -31,7 +26,6 @@ struct EngineSnapshot {
     std::string stateText = "Idle";
     std::string error;
     BackendInfo backend;
-    TelemetrySample telemetry;
     double targetLoadPercent = 0.0;
     double elapsedSeconds = 0.0;
     double remainingSeconds = 0.0;
@@ -42,11 +36,7 @@ struct EngineSnapshot {
 
 class StressEngine {
 public:
-    StressEngine(std::unique_ptr<IStressBackend> backend,
-                 std::unique_ptr<ITelemetryProvider> telemetry);
-    StressEngine(std::unique_ptr<IStressBackend> backend,
-                 std::unique_ptr<ITelemetryProvider> telemetry,
-                 std::unique_ptr<RunLogger> logger);
+    explicit StressEngine(std::unique_ptr<IStressBackend> backend);
     ~StressEngine();
 
     StressEngine(const StressEngine&) = delete;
@@ -65,8 +55,6 @@ private:
     static std::string stateToText(EngineState state);
 
     std::unique_ptr<IStressBackend> backend_;
-    std::unique_ptr<ITelemetryProvider> telemetry_;
-    std::unique_ptr<RunLogger> logger_;
     std::thread worker_;
     std::atomic<bool> stopRequested_{false};
     std::atomic<bool> running_{false};
