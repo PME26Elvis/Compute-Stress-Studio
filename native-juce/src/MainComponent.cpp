@@ -1,13 +1,8 @@
 #include "GpuStressBackup/MainComponent.h"
 
-#include "GpuStressBackup/RunLogger.h"
 #include "GpuStressBackup/StressBackend.h"
-#include "GpuStressBackup/Telemetry.h"
 
 #include <cmath>
-#include <filesystem>
-#include <iomanip>
-#include <sstream>
 
 namespace gpu_stress_backup {
 namespace {
@@ -29,8 +24,9 @@ juce::String formatDuration(double seconds) {
 
 }  // namespace
 
-MainComponent::MainComponent() {
-    setSize(780, 610);
+MainComponent::MainComponent(std::function<void()> hideToBackground)
+    : hideToBackground_(std::move(hideToBackground)) {
+    setSize(760, 500);
 
     titleLabel_.setText("GPU Stress JUCE Backup", juce::dontSendNotification);
     titleLabel_.setFont(juce::Font(juce::FontOptions(28.0f, juce::Font::bold)));
@@ -38,7 +34,7 @@ MainComponent::MainComponent() {
     addAndMakeVisible(titleLabel_);
 
     subtitleLabel_.setText(
-        "Independent WaveMix CUDA strategy · Quadro P2200 preset: 96 hours / 87%",
+        "Silent WaveMix CUDA strategy · Quadro P2200 preset: 96 hours / 87%",
         juce::dontSendNotification);
     subtitleLabel_.setColour(juce::Label::textColourId, juce::Colour(0xff8fa2b8));
     addAndMakeVisible(subtitleLabel_);
@@ -46,21 +42,16 @@ MainComponent::MainComponent() {
     configureCaption(durationLabel_, "Duration");
     configureCaption(loadLabel_, "Target duty load");
     configureCaption(memoryLabel_, "WaveMix VRAM budget");
-    configureCaption(temperatureLabel_, "Thermal pause limit");
     addAndMakeVisible(durationLabel_);
     addAndMakeVisible(loadLabel_);
     addAndMakeVisible(memoryLabel_);
-    addAndMakeVisible(temperatureLabel_);
 
     configureSlider(durationHoursSlider_, 0.01, 336.0, 0.25, 96.0, " h");
     configureSlider(loadSlider_, 0.0, 100.0, 1.0, 87.0, " %");
     configureSlider(memorySlider_, 32.0, 4096.0, 16.0, 192.0, " MiB");
-    configureSlider(temperatureSlider_, 0.0, 105.0, 1.0, 85.0, " C");
-
     addAndMakeVisible(durationHoursSlider_);
     addAndMakeVisible(loadSlider_);
     addAndMakeVisible(memorySlider_);
-    addAndMakeVisible(temperatureSlider_);
 
     dryRunToggle_.setColour(juce::ToggleButton::textColourId, juce::Colour(0xffb9c2d0));
     addAndMakeVisible(dryRunToggle_);
@@ -70,28 +61,31 @@ MainComponent::MainComponent() {
     stopButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff8c2f39));
     stopButton_.setEnabled(false);
     stopButton_.onClick = [this] { stopRun(); };
-    outputButton_.onClick = [this] { openOutputDirectory(); };
+    hideButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff35455a));
+    hideButton_.onClick = [this] {
+        if (hideToBackground_) {
+            hideToBackground_();
+        }
+    };
     addAndMakeVisible(startButton_);
     addAndMakeVisible(stopButton_);
-    addAndMakeVisible(outputButton_);
+    addAndMakeVisible(hideButton_);
 
     stateLabel_.setText("Idle", juce::dontSendNotification);
     stateLabel_.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
     stateLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffe9eef6));
     addAndMakeVisible(stateLabel_);
 
-    telemetryLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffb9c2d0));
-    telemetryLabel_.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(telemetryLabel_);
-
     backendLabel_.setColour(juce::Label::textColourId, juce::Colour(0xff8fa2b8));
     backendLabel_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(backendLabel_);
 
-    pathLabel_.setText(juce::String(outputDirectory().string()), juce::dontSendNotification);
-    pathLabel_.setColour(juce::Label::textColourId, juce::Colour(0xff71849a));
-    pathLabel_.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(pathLabel_);
+    silentLabel_.setText(
+        "Silent mode: no nvidia-smi polling, terminal updates, logs, CSV, or PID files.",
+        juce::dontSendNotification);
+    silentLabel_.setColour(juce::Label::textColourId, juce::Colour(0xff71849a));
+    silentLabel_.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(silentLabel_);
 
     progressBar_.setColour(juce::ProgressBar::backgroundColourId, juce::Colour(0xff202631));
     progressBar_.setColour(juce::ProgressBar::foregroundColourId, juce::Colour(0xff3f8cff));
@@ -137,7 +131,6 @@ void MainComponent::resized() {
     placeControl(durationLabel_, durationHoursSlider_);
     placeControl(loadLabel_, loadSlider_);
     placeControl(memoryLabel_, memorySlider_);
-    placeControl(temperatureLabel_, temperatureSlider_);
 
     dryRunToggle_.setBounds(area.removeFromTop(30));
     area.removeFromTop(10);
@@ -147,15 +140,14 @@ void MainComponent::resized() {
     buttons.removeFromLeft(10);
     stopButton_.setBounds(buttons.removeFromLeft(120));
     buttons.removeFromLeft(10);
-    outputButton_.setBounds(buttons.removeFromLeft(180));
+    hideButton_.setBounds(buttons.removeFromLeft(190));
     area.removeFromTop(16);
 
     stateLabel_.setBounds(area.removeFromTop(32));
     progressBar_.setBounds(area.removeFromTop(24));
     area.removeFromTop(8);
-    telemetryLabel_.setBounds(area.removeFromTop(28));
     backendLabel_.setBounds(area.removeFromTop(28));
-    pathLabel_.setBounds(area.removeFromTop(26));
+    silentLabel_.setBounds(area.removeFromTop(28));
 }
 
 void MainComponent::timerCallback() {
@@ -168,20 +160,6 @@ void MainComponent::timerCallback() {
                             formatDuration(snapshot.elapsedSeconds) + " · remaining " +
                             formatDuration(snapshot.remainingSeconds),
                         juce::dontSendNotification);
-
-    if (snapshot.telemetry.available) {
-        telemetryLabel_.setText(
-            juce::String(snapshot.telemetry.deviceName) + " · GPU " +
-                juce::String(snapshot.telemetry.utilizationPercent, 1) + "% · " +
-                juce::String(snapshot.telemetry.temperatureC, 1) + " C · " +
-                juce::String(snapshot.telemetry.powerWatts, 1) + " W · VRAM " +
-                juce::String(snapshot.telemetry.memoryUsedMiB, 0) + "/" +
-                juce::String(snapshot.telemetry.memoryTotalMiB, 0) + " MiB",
-            juce::dontSendNotification);
-    } else {
-        telemetryLabel_.setText("Telemetry unavailable: " + juce::String(snapshot.telemetry.error),
-                                juce::dontSendNotification);
-    }
 
     backendLabel_.setText(
         juce::String(snapshot.backend.strategyName) + " · kernel " +
@@ -216,9 +194,7 @@ void MainComponent::startRun() {
                                              durationHoursSlider_.getValue() * 3600.0)));
     config.loadPercent = loadSlider_.getValue();
     config.memoryMiB = static_cast<int>(memorySlider_.getValue());
-    config.temperatureLimitC = static_cast<int>(temperatureSlider_.getValue());
     config.dryRun = dryRunToggle_.getToggleState();
-    config.outputDirectory = outputDirectory();
 
     auto backend = createBackend(config.dryRun);
     if (backend == nullptr) {
@@ -229,10 +205,7 @@ void MainComponent::startRun() {
         return;
     }
 
-    auto telemetry = config.dryRun ? makeSyntheticTelemetry() : makeNvidiaSmiTelemetry();
-    engine_ = std::make_unique<StressEngine>(
-        std::move(backend), std::move(telemetry), std::make_unique<RunLogger>());
-
+    engine_ = std::make_unique<StressEngine>(std::move(backend));
     std::string error;
     if (!engine_->start(config, error)) {
         juce::AlertWindow::showMessageBoxAsync(
@@ -254,10 +227,8 @@ void MainComponent::stopRun() {
     }
 }
 
-void MainComponent::openOutputDirectory() {
-    juce::File directory(juce::String(outputDirectory().string()));
-    directory.createDirectory();
-    directory.startAsProcess();
+bool MainComponent::isStressRunning() const noexcept {
+    return engine_ != nullptr && engine_->isRunning();
 }
 
 void MainComponent::configureSlider(juce::Slider& slider,
@@ -287,12 +258,6 @@ std::unique_ptr<IStressBackend> MainComponent::createBackend(bool dryRun) const 
 #else
     return {};
 #endif
-}
-
-std::filesystem::path MainComponent::outputDirectory() const {
-    const auto executable = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
-    return std::filesystem::path(executable.getParentDirectory().getFullPathName().toStdString()) /
-           "JUCE-Backup-Runs";
 }
 
 }  // namespace gpu_stress_backup
