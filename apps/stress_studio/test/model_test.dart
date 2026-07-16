@@ -9,6 +9,13 @@ void main() {
     expect(configuration.validate(), isNull);
   });
 
+  test('recommended CPU count reserves one logical processor', () {
+    expect(recommendedCpuThreadCount(1), 1);
+    expect(recommendedCpuThreadCount(2), 1);
+    expect(recommendedCpuThreadCount(8), 7);
+    expect(recommendedCpuThreadCount(128), 64);
+  });
+
   test('configuration rejects an empty workload', () {
     final configuration = RunConfiguration.defaults().copyWith(
       cpuEnabled: false,
