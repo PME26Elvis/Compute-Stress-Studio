@@ -43,8 +43,10 @@ struct EngineSnapshot {
 class StressEngine {
 public:
     StressEngine(std::unique_ptr<IStressBackend> backend,
+                 std::unique_ptr<ITelemetryProvider> telemetry);
+    StressEngine(std::unique_ptr<IStressBackend> backend,
                  std::unique_ptr<ITelemetryProvider> telemetry,
-                 std::unique_ptr<RunLogger> logger = {});
+                 std::unique_ptr<RunLogger> logger);
     ~StressEngine();
 
     StressEngine(const StressEngine&) = delete;
