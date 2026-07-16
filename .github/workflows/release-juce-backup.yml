@@ -274,8 +274,11 @@ jobs:
             --icon-file native-juce/packaging/appimage/gpu-stress-juce.svg
 
           cp "$cli" AppDir/usr/bin/GPU-Stress-JUCE-CLI
+          rm -f AppDir/AppRun
           cp native-juce/packaging/appimage/AppRun AppDir/AppRun
           chmod +x AppDir/AppRun
+          test -x AppDir/usr/bin/GPU-Stress-JUCE
+          file AppDir/usr/bin/GPU-Stress-JUCE | grep -q 'ELF'
           cp docs/JUCE_WAVEMIX_BACKUP_GUIDE.md AppDir/
           cp native-juce/THIRD_PARTY_NOTICES.md AppDir/
           cp build/juce-linux/_deps/juce-src/LICENSE.md AppDir/JUCE-LICENSE.md
@@ -291,6 +294,7 @@ jobs:
             ./GPU-Stress-JUCE-Backup-x86_64.AppImage --gui-smoke
           size="$(stat -c%s GPU-Stress-JUCE-Backup-x86_64.AppImage)"
           echo "appimage_asset_size_bytes=$size"
+          test "$size" -gt 1000000
           test "$size" -lt 2000000000
       - uses: actions/upload-artifact@v4
         with:
