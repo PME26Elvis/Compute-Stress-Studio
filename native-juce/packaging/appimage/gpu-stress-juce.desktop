@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GPU Stress JUCE Backup
+Comment=Independent CUDA WaveMix GPU stress tool with JUCE GUI
+Exec=GPU-Stress-JUCE
+Icon=gpu-stress-juce
+Categories=System;Monitor;
+Terminal=false
