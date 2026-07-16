@@ -1,33 +1,21 @@
 # Release channels and artifact matrix
 
-This is the canonical map of what the repository publishes. Subsystem guides may explain how an artifact is built, but this file defines which release family owns it.
+This is the canonical map of what the repository publishes. Subsystem guides explain implementation details; this file defines ownership, names, and publication policy.
 
 ## Release families
 
 | Family | Primary audience | Tag convention | Main artifacts | Workflow |
 | --- | --- | --- | --- | --- |
-| Compute Stress Studio preview | users wanting one CPU+GPU desktop app | `stress-studio-v*` | Windows ZIP, Linux tar, checksums | `flutter-stress-studio.yml` |
-| Python GPU portable | users wanting adaptive telemetry-aware GPU stress without installing Python | `gpu-v*` | Windows ZIP, Linux tar, AppImage, Docker archive, GHCR image, checksums | `release-gpu-packages.yml` |
-| Native JUCE WaveMix | users wanting an independent native CUDA implementation | native JUCE release tags | Windows/Linux native packages and checksums | native JUCE release workflow |
-| Original CPU application | legacy Linux PyQt users | historical releases | original Linux CPU binary | historical workflow/manual release |
+| Compute Stress Studio preview | one CPU+GPU desktop app | `compute-stress-studio-v*` | Windows ZIP, Linux tar, checksums | `flutter-stress-studio.yml` |
+| Python GPU portable | adaptive telemetry-aware GPU stress without Python installation | `gpu-v*` | Windows ZIP, Linux tar, AppImage, Docker archive, GHCR image, checksums | `release-gpu-packages.yml` |
+| Native JUCE WaveMix | independent native CUDA implementation | `juce-backup-v*` | Windows ZIP, Linux tar, AppImage, checksums | `release-juce-backup.yml` |
+| Original CPU application | legacy Linux PyQt users | historical releases | original Linux CPU binary | historical/manual |
 
 ## Compute Stress Studio
 
-### Current published preview
+### Current preview
 
-Tag: `stress-studio-v0.1.14`
-
-```text
-Stress-Studio-Windows-x64.zip
-Stress-Studio-Linux-x64.tar.gz
-SHA256SUMS.txt
-```
-
-This release contains the Flutter desktop shell and the silent JUCE CUDA GPU worker in the same extracted directory. Do not copy only the Flutter executable; the adjacent Flutter runtime files, data directory, and GPU worker are part of the application.
-
-### Future artifact names
-
-New manually published releases use:
+Tag: `compute-stress-studio-v0.2.0`
 
 ```text
 Compute-Stress-Studio-Windows-x64.zip
@@ -35,16 +23,43 @@ Compute-Stress-Studio-Linux-x64.tar.gz
 SHA256SUMS.txt
 ```
 
-The internal Flutter executable remains `stress_studio.exe` on Windows and `stress_studio` on Linux for compatibility. The bundled GPU worker remains `GPU-Stress-JUCE-Background[.exe]`.
+Each extracted bundle contains:
+
+```text
+stress_studio[.exe]                  Flutter Material 3 control plane
+Compute-Stress-CPU-Worker[.exe]      silent low-priority CPU process
+GPU-Stress-JUCE-Background[.exe]     silent CUDA WaveMix GPU process
+Flutter runtime libraries/data
+README and architecture/release documents
+SOURCE-COMMIT.txt
+```
+
+Do not move only `stress_studio.exe`. The Flutter runtime and both adjacent workers are required.
+
+### Windows responsiveness fix
+
+Preview 0.1 ran CPU hot loops in Dart isolates inside the Flutter process. Preview 0.2 moves CPU load into `Compute-Stress-CPU-Worker.exe`, a Windows GUI-subsystem process that lowers itself to Below Normal priority. The Flutter message pump and Stop action therefore do not share the stressed process.
+
+### Legacy preview
+
+`stress-studio-v0.1.14` remains available for provenance with the old archive names:
+
+```text
+Stress-Studio-Windows-x64.zip
+Stress-Studio-Linux-x64.tar.gz
+```
+
+Users should prefer v0.2.0 or newer because v0.1 can become unresponsive under combined CPU+GPU load on some Windows systems.
 
 ### Publication policy
 
-- pull requests: format, analyze, test, build native worker, build Flutter, assemble artifacts; no GitHub Release;
-- pushes to `main`: repeat validation and artifact assembly; no automatic GitHub Release;
-- workflow dispatch: choose tag, title, notes file, and prerelease flag; create or update the release idempotently;
-- release-note corrections: use `release-notes-maintenance.yml` with a versioned file under `docs/releases/`.
+- pull requests: format, analyze, test both native workers, build Flutter, assemble archives; no Release;
+- relevant pushes to `main`: repeat validation and archive assembly;
+- explicit workflow dispatch: create or update a chosen release;
+- versioned manifest under `release/compute-stress-studio/`: request one audited release together with a merged change;
+- release-note corrections: use `release-notes-maintenance.yml` and a versioned file under `docs/releases/`.
 
-This policy prevents a README or workflow-only change from silently publishing a new prerelease.
+A normal documentation-only commit does not publish a version.
 
 ## Python GPU portable family
 
@@ -59,28 +74,24 @@ GPU-Stress-Docker-IMAGE.txt
 SHA256SUMS.txt
 ```
 
-The GHCR image name is derived from `GITHUB_REPOSITORY`. After the repository is renamed, future images will use the new repository-derived path. Existing images under the old `cpu-monitor-stress-tool-gpu` path should be treated as a legacy distribution channel and not deleted until users have migrated.
+Future GHCR builds derive their image path from `PME26Elvis/Compute-Stress-Studio`. Images under the former `cpu-monitor-stress-tool-gpu` package path are a legacy channel and should not be removed until users have migrated.
 
 ## Native JUCE family
 
-The JUCE implementation is both:
-
-1. an independently downloadable native fallback; and
-2. the GPU worker embedded in Compute Stress Studio.
-
-Standalone native package names may keep the `GPU-Stress-JUCE-*` prefix because they identify a backend/entry point rather than the repository brand. Compute Stress Studio archives wrap that worker with the Flutter application.
+The JUCE implementation is both an independent fallback and the GPU worker embedded in Compute Stress Studio. Standalone package names retain the `GPU-Stress-JUCE-*` prefix because they identify a backend and entry point rather than the repository brand.
 
 ## Versioning guidance
 
-- Product releases should use explicit semantic-like tags chosen by workflow dispatch rather than GitHub Actions run numbers as the only version signal.
-- Version-specific release notes belong in `docs/releases/<tag>.md`.
-- A release note must name the actual assets, requirements, important behavior changes, known limitations, and source commit or PR when relevant.
-- Rebuilding an existing tag should be exceptional. The workflow supports updating a release for note corrections or intentionally replaced preview assets, but the release notes must say when assets were replaced.
+- Use explicit semantic-like product tags.
+- Put version-specific notes in `docs/releases/<tag>.md`.
+- Name actual assets, requirements, important changes, limitations, and provenance.
+- Replacing assets under an existing tag is exceptional and must be stated in the notes.
+- Add a release-request JSON only when the same merge is intentionally meant to publish.
 
 ## Checksums and provenance
 
-Each release family generates `SHA256SUMS.txt`. Compute Stress Studio bundles also include `SOURCE-COMMIT.txt`, the product specification, the JUCE guide, and third-party notices. CI validates that both the Flutter executable and GPU worker are present before archive creation.
+Every release family generates `SHA256SUMS.txt`. Compute Stress Studio bundles include `SOURCE-COMMIT.txt`. CI verifies the Flutter executable and both worker executables before archive creation and runs the CPU worker's silent self-test from the assembled bundle.
 
 ## Hardware validation boundary
 
-GitHub-hosted runners do not expose the target NVIDIA GPU. CI proves source formatting, static analysis, unit/widget/native tests, compilation, linking, archive composition, and startup paths that do not require physical CUDA execution. It does not prove sustained utilization, temperature, fan, board power, clocks, or stability on a user's machine.
+GitHub-hosted runners validate source formatting, static analysis, Flutter tests, native tests, compilation, linking, archive composition, and non-GPU startup paths. They do not prove sustained utilization, temperature, fan, board power, clocks, or stability on the target NVIDIA GPU.
