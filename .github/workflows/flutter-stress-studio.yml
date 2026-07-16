@@ -1,0 +1,246 @@
+name: Flutter Stress Studio
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional release tag
+        required: false
+        default: ''
+        type: string
+      prerelease:
+        description: Mark release as prerelease
+        required: true
+        default: true
+        type: boolean
+  push:
+    branches: [main]
+    paths: &flutter-studio-paths
+      - apps/stress_studio/**
+      - native-juce/**
+      - docs/FLUTTER_STRESS_STUDIO_SPEC.md
+      - .github/workflows/flutter-stress-studio.yml
+      - README.md
+  pull_request:
+    paths: *flutter-studio-paths
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flutter-stress-studio-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FLUTTER_VERSION: '3.44.0'
+  CUDA_VERSION: '12.6.3'
+  APP_DIR: apps/stress_studio
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Generate desktop scaffolding
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter create --platforms=windows,linux --org com.pme26elvis --project-name stress_studio .
+      - name: Resolve dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+      - name: Verify formatting
+        working-directory: ${{ env.APP_DIR }}
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter analyze
+      - name: Test
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter test --coverage
+
+  windows-package:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: local
+      - name: Generate Windows scaffolding
+        working-directory: ${{ env.APP_DIR }}
+        shell: pwsh
+        run: flutter create --platforms=windows --org com.pme26elvis --project-name stress_studio .
+      - name: Build JUCE GPU worker
+        shell: pwsh
+        run: |
+          cmake -S native-juce -B build/flutter-juce-windows `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DGPU_STRESS_ENABLE_CUDA=ON `
+            -DGPU_STRESS_BUILD_GUI=ON `
+            -DGPU_STRESS_BUILD_TESTS=ON `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build build/flutter-juce-windows --config Release --parallel 2
+          ctest --test-dir build/flutter-juce-windows -C Release --output-on-failure
+      - name: Build Flutter Windows release
+        working-directory: ${{ env.APP_DIR }}
+        shell: pwsh
+        run: |
+          flutter pub get
+          flutter build windows --release
+      - name: Assemble Windows bundle
+        shell: pwsh
+        run: |
+          $source = Join-Path $PWD "apps\stress_studio\build\windows\x64\runner\Release"
+          $bundle = Join-Path $PWD "dist\Stress-Studio-Windows-x64"
+          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+          Copy-Item "$source\*" $bundle -Recurse -Force
+          $worker = Get-ChildItem build\flutter-juce-windows -Recurse -Filter "GPU-Stress-JUCE.exe" | Select-Object -First 1
+          if (-not $worker) { throw "JUCE GPU worker was not found" }
+          Copy-Item $worker.FullName (Join-Path $bundle "GPU-Stress-JUCE-Background.exe")
+          Copy-Item docs\FLUTTER_STRESS_STUDIO_SPEC.md $bundle
+          Copy-Item docs\JUCE_WAVEMIX_BACKUP_GUIDE.md $bundle
+          Copy-Item native-juce\THIRD_PARTY_NOTICES.md $bundle
+          Set-Content -Path (Join-Path $bundle "SOURCE-COMMIT.txt") -Value $env:GITHUB_SHA
+          if (-not (Test-Path (Join-Path $bundle "stress_studio.exe"))) { throw "Flutter executable is missing" }
+          if (-not (Test-Path (Join-Path $bundle "GPU-Stress-JUCE-Background.exe"))) { throw "GPU worker is missing" }
+          Compress-Archive -Path "$bundle\*" -DestinationPath Stress-Studio-Windows-x64.zip -CompressionLevel Optimal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stress-studio-windows
+          path: Stress-Studio-Windows-x64.zip
+          compression-level: 0
+          retention-days: 5
+
+  linux-package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libasound2-dev libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: local
+      - name: Generate Linux scaffolding
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter create --platforms=linux --org com.pme26elvis --project-name stress_studio .
+      - name: Build JUCE GPU worker
+        run: |
+          cmake -S native-juce -B build/flutter-juce-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGPU_STRESS_ENABLE_CUDA=ON \
+            -DGPU_STRESS_BUILD_GUI=ON \
+            -DGPU_STRESS_BUILD_TESTS=ON
+          cmake --build build/flutter-juce-linux --parallel 2
+          ctest --test-dir build/flutter-juce-linux --output-on-failure
+      - name: Build Flutter Linux release
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          flutter pub get
+          flutter build linux --release
+      - name: Assemble Linux bundle
+        run: |
+          set -euo pipefail
+          source_dir="$PWD/apps/stress_studio/build/linux/x64/release/bundle"
+          bundle="$PWD/dist/Stress-Studio-Linux-x64"
+          mkdir -p "$bundle"
+          cp -a "$source_dir/." "$bundle/"
+          worker="$(find build/flutter-juce-linux -type f -name GPU-Stress-JUCE -perm -111 | head -n1)"
+          test -n "$worker"
+          cp "$worker" "$bundle/GPU-Stress-JUCE-Background"
+          cp docs/FLUTTER_STRESS_STUDIO_SPEC.md "$bundle/"
+          cp docs/JUCE_WAVEMIX_BACKUP_GUIDE.md "$bundle/"
+          cp native-juce/THIRD_PARTY_NOTICES.md "$bundle/"
+          printf '%s\n' "$GITHUB_SHA" > "$bundle/SOURCE-COMMIT.txt"
+          test -x "$bundle/stress_studio"
+          test -x "$bundle/GPU-Stress-JUCE-Background"
+          tar -C dist -czf Stress-Studio-Linux-x64.tar.gz Stress-Studio-Linux-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stress-studio-linux
+          path: Stress-Studio-Linux-x64.tar.gz
+          compression-level: 0
+          retention-days: 5
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: [quality, windows-package, linux-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
+            tag="${{ inputs.release_tag }}"
+            prerelease="${{ inputs.prerelease }}"
+          else
+            tag="stress-studio-v0.1.${GITHUB_RUN_NUMBER}"
+            prerelease="true"
+          fi
+          echo "tag=${tag#refs/tags/}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+      - name: Generate checksums and notes
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cd ..
+          cat > release-notes.md <<'NOTES'
+          ## Stress Studio v0.1
+
+          A modern Flutter desktop control plane for coordinated CPU and NVIDIA GPU stress sessions.
+
+          - Material 3 adaptive Windows/Linux interface
+          - CPU stress in killable Dart isolates
+          - bundled silent JUCE CUDA WaveMix GPU worker
+          - quick, balanced, CPU, GPU, and 96-hour endurance presets
+          - transactional start/rollback and coordinated stop
+          - strict Flutter analysis, unit/controller/widget tests
+
+          The displayed percentages are requested workload targets, not physical telemetry readings. Use an external monitor for temperature, fan, power, clocks, and measured utilization. Physical NVIDIA execution still requires a target-machine smoke test.
+          NOTES
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Stress Studio $RELEASE_TAG" \
+            --notes-file release-notes.md \
+            "${flags[@]}"
