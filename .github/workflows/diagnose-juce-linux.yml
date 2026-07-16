@@ -1,0 +1,92 @@
+name: Diagnose JUCE Linux CUDA
+
+on:
+  pull_request:
+    paths:
+      - native-juce/**
+      - .github/workflows/diagnose-juce-linux.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    container:
+      image: nvidia/cuda:12.6.3-devel-ubuntu22.04
+    timeout-minutes: 90
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates cmake curl file git g++ make ninja-build pkg-config xz-utils \
+            libasound2-dev libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
+            libgtk-3-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev xvfb xauth
+          rm -rf /var/lib/apt/lists/*
+      - uses: actions/checkout@v4
+      - name: Configure with focused output
+        id: configure
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build/juce-linux
+          cmake -S native-juce -B build/juce-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGPU_STRESS_ENABLE_CUDA=ON \
+            -DGPU_STRESS_BUILD_GUI=ON \
+            -DGPU_STRESS_BUILD_TESTS=ON \
+            > build/juce-linux/configure.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          tail -n 120 build/juce-linux/configure.log
+          exit 0
+      - name: Upload configure log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: juce-linux-configure-log
+          path: build/juce-linux/configure.log
+          retention-days: 3
+      - name: Fail when configure failed
+        if: steps.configure.outputs.status != '0'
+        run: exit 1
+      - name: Build with focused output
+        id: build
+        shell: bash
+        run: |
+          set +e
+          cmake --build build/juce-linux --parallel 2 > build/juce-linux/build.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          tail -n 160 build/juce-linux/build.log
+          exit 0
+      - name: Upload compiler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: juce-linux-build-log
+          path: build/juce-linux/build.log
+          retention-days: 3
+      - name: Fail when build failed
+        if: steps.build.outputs.status != '0'
+        run: exit 1
+      - name: Run tests and GUI/background smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/juce-linux --output-on-failure
+          cli="$(find build/juce-linux -type f -name GPU-Stress-JUCE-CLI -perm -111 | head -n1)"
+          gui="$(find build/juce-linux -type f -name GPU-Stress-JUCE -perm -111 | head -n1)"
+          test -n "$cli" && test -n "$gui"
+          "$cli" --self-test
+          xvfb-run -a "$gui" --gui-smoke
+          cp "$gui" build/juce-linux/GPU-Stress-JUCE-Background
+          run_dir="$PWD/build/juce-linux/background-runs"
+          xvfb-run -a build/juce-linux/GPU-Stress-JUCE-Background \
+            --dry-run --duration 1 --load 87 --output-dir "$run_dir"
+          test -f "$run_dir/gpu-stress-juce-console.log"
+          test -f "$run_dir/gpu-stress-juce-telemetry.csv"
+          test ! -f "$run_dir/gpu-stress-juce.pid"
