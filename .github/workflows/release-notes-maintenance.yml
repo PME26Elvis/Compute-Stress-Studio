@@ -1,0 +1,92 @@
+name: Release notes maintenance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/releases/stress-studio-v0.1.14.md
+      - .github/workflows/release-notes-maintenance.yml
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag to edit
+        required: true
+        default: stress-studio-v0.1.14
+        type: string
+      release_title:
+        description: Replacement GitHub Release title
+        required: true
+        default: Compute Stress Studio preview 0.1.14
+        type: string
+      notes_file:
+        description: Repository-relative Markdown file used as the release body
+        required: true
+        default: docs/releases/stress-studio-v0.1.14.md
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-notes-maintenance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update-release-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve maintenance target
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.release_tag }}"
+            title="${{ inputs.release_title }}"
+            notes_file="${{ inputs.notes_file }}"
+          else
+            tag="stress-studio-v0.1.14"
+            title="Compute Stress Studio preview 0.1.14"
+            notes_file="docs/releases/stress-studio-v0.1.14.md"
+          fi
+
+          tag="${tag#refs/tags/}"
+          if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+          if [[ "$notes_file" = /* || "$notes_file" == *".."* ]]; then
+            echo "notes_file must be a safe repository-relative path" >&2
+            exit 1
+          fi
+          if [[ ! -f "$notes_file" ]]; then
+            echo "Release notes file does not exist: $notes_file" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
+
+      - name: Update existing GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.meta.outputs.title }}
+          NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_TITLE" \
+            --notes-file "$NOTES_FILE"
+
+      - name: Verify updated release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
