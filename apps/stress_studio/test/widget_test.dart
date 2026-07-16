@@ -6,7 +6,7 @@ import 'package:stress_studio/src/services.dart';
 import 'package:stress_studio/src/studio_app.dart';
 
 void main() {
-  testWidgets('dashboard exposes coordinated workload controls', (
+  testWidgets('dashboard exposes responsive out-of-process workloads', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1600, 1200);
@@ -21,13 +21,20 @@ void main() {
     await tester.pumpWidget(StressStudioApp(controller: controller));
     await tester.pumpAndSettle();
 
+    expect(find.text('Compute Stress Studio'), findsOneWidget);
     expect(find.text('Workload composer'), findsOneWidget);
     expect(find.text('CPU engine'), findsOneWidget);
     expect(find.text('NVIDIA GPU engine'), findsOneWidget);
+    expect(find.textContaining('low-priority CPU worker'), findsOneWidget);
     expect(
       find.widgetWithText(FilledButton, 'Start session  Ctrl+Enter'),
       findsOneWidget,
     );
+
+    controller.selectPage(2);
+    await tester.pumpAndSettle();
+    expect(find.text('Bundled CPU worker'), findsOneWidget);
+    expect(find.text('Bundled GPU worker'), findsOneWidget);
   });
 
   testWidgets('owned app stops active workers when removed', (tester) async {

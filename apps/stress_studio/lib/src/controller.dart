@@ -52,6 +52,8 @@ final class StudioController extends ChangeNotifier {
     operatingSystem:
         '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
     logicalProcessors: Platform.numberOfProcessors,
+    cpuWorkerPath: _cpuService.workerPath,
+    cpuWorkerAvailable: _cpuService.isAvailable,
     gpuWorkerPath: _gpuService.workerPath,
     gpuWorkerAvailable: _gpuService.isAvailable,
   );

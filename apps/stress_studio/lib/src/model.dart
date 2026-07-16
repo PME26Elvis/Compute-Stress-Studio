@@ -2,6 +2,14 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+int recommendedCpuThreadCount([int? logicalProcessors]) {
+  final processors = logicalProcessors ?? Platform.numberOfProcessors;
+  if (processors <= 1) {
+    return 1;
+  }
+  return (processors - 1).clamp(1, 64).toInt();
+}
+
 @immutable
 class RunConfiguration {
   const RunConfiguration({
@@ -20,7 +28,7 @@ class RunConfiguration {
     duration: const Duration(hours: 1),
     cpuEnabled: true,
     cpuLoadPercent: 65,
-    cpuThreads: Platform.numberOfProcessors.clamp(1, 64).toInt(),
+    cpuThreads: recommendedCpuThreadCount(),
     gpuEnabled: true,
     gpuLoadPercent: 80,
     gpuMemoryMiB: 192,
@@ -29,13 +37,13 @@ class RunConfiguration {
   );
 
   factory RunConfiguration.preset(StudioPreset preset) {
-    final logicalCores = Platform.numberOfProcessors.clamp(1, 64).toInt();
+    final recommendedWorkers = recommendedCpuThreadCount();
     return switch (preset) {
       StudioPreset.balanced => RunConfiguration(
         duration: const Duration(hours: 1),
         cpuEnabled: true,
         cpuLoadPercent: 65,
-        cpuThreads: logicalCores,
+        cpuThreads: recommendedWorkers,
         gpuEnabled: true,
         gpuLoadPercent: 80,
         gpuMemoryMiB: 192,
@@ -46,7 +54,7 @@ class RunConfiguration {
         duration: const Duration(minutes: 30),
         cpuEnabled: true,
         cpuLoadPercent: 85,
-        cpuThreads: logicalCores,
+        cpuThreads: recommendedWorkers,
         gpuEnabled: false,
         gpuLoadPercent: 0,
         gpuMemoryMiB: 192,
@@ -57,7 +65,7 @@ class RunConfiguration {
         duration: const Duration(minutes: 30),
         cpuEnabled: false,
         cpuLoadPercent: 0,
-        cpuThreads: logicalCores,
+        cpuThreads: recommendedWorkers,
         gpuEnabled: true,
         gpuLoadPercent: 87,
         gpuMemoryMiB: 192,
@@ -68,7 +76,7 @@ class RunConfiguration {
         duration: const Duration(hours: 96),
         cpuEnabled: true,
         cpuLoadPercent: 60,
-        cpuThreads: logicalCores,
+        cpuThreads: recommendedWorkers,
         gpuEnabled: true,
         gpuLoadPercent: 87,
         gpuMemoryMiB: 192,
@@ -79,7 +87,7 @@ class RunConfiguration {
         duration: const Duration(minutes: 2),
         cpuEnabled: true,
         cpuLoadPercent: 25,
-        cpuThreads: logicalCores,
+        cpuThreads: recommendedWorkers,
         gpuEnabled: true,
         gpuLoadPercent: 25,
         gpuMemoryMiB: 96,
@@ -175,12 +183,16 @@ class CapabilitySnapshot {
   const CapabilitySnapshot({
     required this.operatingSystem,
     required this.logicalProcessors,
+    required this.cpuWorkerPath,
+    required this.cpuWorkerAvailable,
     required this.gpuWorkerPath,
     required this.gpuWorkerAvailable,
   });
 
   final String operatingSystem;
   final int logicalProcessors;
+  final String cpuWorkerPath;
+  final bool cpuWorkerAvailable;
   final String gpuWorkerPath;
   final bool gpuWorkerAvailable;
 }
