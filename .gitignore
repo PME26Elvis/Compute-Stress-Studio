@@ -1,12 +1,18 @@
+# Python
 venv/
+.venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+
+# Native, Flutter, and packaging output
 build/
 dist/
+.dart_tool/
+.flutter-plugins*
+coverage/
 *.spec
-*.egg-info/
-.DS_Store
-__pycache__/
-*.pyc
-*.csv
 
+# Runtime output and local metadata
+*.csv
+.DS_Store
