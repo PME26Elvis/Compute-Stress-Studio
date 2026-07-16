@@ -1,6 +1,5 @@
 #include "GpuStressBackup/AppConfig.h"
 
-#include <algorithm>
 #include <charconv>
 #include <cctype>
 #include <sstream>
@@ -68,10 +67,6 @@ bool AppConfig::validate(std::string& error) const {
         error = "device must be between 0 and 31";
         return false;
     }
-    if (temperatureLimitC != 0 && (temperatureLimitC < 50 || temperatureLimitC > 105)) {
-        error = "temp-limit must be 0 (disabled) or between 50 and 105 C";
-        return false;
-    }
     if (dutyWindowMs < 50 || dutyWindowMs > 2000) {
         error = "window-ms must be between 50 and 2000";
         return false;
@@ -99,8 +94,6 @@ ParseResult parseArguments(const std::vector<std::string>& arguments) {
             result.config.selfTest = true;
         } else if (argument == "--gui-smoke") {
             result.config.guiSmoke = true;
-        } else if (argument == "--no-telemetry") {
-            result.config.telemetryEnabled = false;
         } else if (takeValue(arguments, index, "--duration", value, result.error)) {
             if (!parseNumber(value, result.config.durationSeconds)) {
                 result.ok = false;
@@ -125,12 +118,6 @@ ParseResult parseArguments(const std::vector<std::string>& arguments) {
                 result.error = "invalid --device value: " + value;
                 return result;
             }
-        } else if (takeValue(arguments, index, "--temp-limit", value, result.error)) {
-            if (!parseNumber(value, result.config.temperatureLimitC)) {
-                result.ok = false;
-                result.error = "invalid --temp-limit value: " + value;
-                return result;
-            }
         } else if (takeValue(arguments, index, "--window-ms", value, result.error)) {
             if (!parseNumber(value, result.config.dutyWindowMs)) {
                 result.ok = false;
@@ -143,8 +130,6 @@ ParseResult parseArguments(const std::vector<std::string>& arguments) {
                 result.error = "invalid --kernel-ms value: " + value;
                 return result;
             }
-        } else if (takeValue(arguments, index, "--output-dir", value, result.error)) {
-            result.config.outputDirectory = value;
         } else {
             result.ok = false;
             if (result.error.empty()) {
@@ -161,28 +146,30 @@ ParseResult parseArguments(const std::vector<std::string>& arguments) {
 }
 
 std::string helpText() {
-    return R"HELP(GPU Stress JUCE Backup - custom CUDA WaveMix engine
+    return R"HELP(GPU Stress JUCE Backup - silent custom CUDA WaveMix engine
 
 Usage:
-  GPU-Stress-JUCE.exe                         Open the JUCE GUI
+  GPU-Stress-JUCE.exe                         Open the JUCE GUI and tray app
   GPU-Stress-JUCE-Background.exe              Hidden 96h / 87% run
-  GPU-Stress-JUCE-CLI.exe [options]            Console mode
+  GPU-Stress-JUCE-CLI.exe [options]            Silent console-mode run
 
 Options:
   --duration SECONDS     Run duration; default 345600 (96 hours)
   --load PERCENT         Duty-window target; default 87
   --memory-mib MIB       WaveMix buffer budget; default 192
-  --device INDEX         CUDA/NVIDIA device index; default 0
-  --temp-limit C         Pause at this temperature; default 85, 0 disables
+  --device INDEX         CUDA device index; default 0
   --window-ms MS         Duty scheduling window; default 200
   --kernel-ms MS         Calibrated short-kernel target; default 8
-  --output-dir PATH      Log/CSV/PID directory
   --background           Run without creating a GUI window
   --dry-run              Use the synthetic backend; no GPU required
-  --no-telemetry         Disable nvidia-smi telemetry sampling
-  --self-test            Run package-level non-GPU checks
-  --gui-smoke            Create the JUCE GUI briefly, then exit
+  --self-test            Run package-level non-GPU checks; exit code only
+  --gui-smoke            Exercise GUI hide/restore and tray lifecycle, then exit
   -h, --help             Show this help
+
+Normal stress runs are intentionally silent and do not launch monitoring tools,
+write logs, create CSV files, or create PID files. The JUCE GUI can be hidden to
+the notification area; double-click its tray icon to restore it, or right-click
+the icon to stop the stress run or exit.
 
 The WaveMix strategy is independent from the Python/cuBLAS implementation. It
 uses short custom CUDA kernels mixing FP32 FMA, integer scrambling, shared-memory
