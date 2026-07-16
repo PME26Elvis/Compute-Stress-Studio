@@ -6,7 +6,7 @@ on:
       release_tag:
         description: Release tag for the JUCE backup implementation
         required: true
-        default: juce-backup-v1.0.0
+        default: juce-backup-v1.1.0
         type: string
       prerelease:
         description: Mark the release as a prerelease
@@ -48,7 +48,7 @@ jobs:
             tag="juce-backup-pr-${{ github.event.pull_request.number }}-${GITHUB_RUN_NUMBER}"
             prerelease="true"
           else
-            tag="juce-backup-v1.0.${GITHUB_RUN_NUMBER}"
+            tag="juce-backup-v1.1.${GITHUB_RUN_NUMBER}"
             prerelease="false"
           fi
           tag="${tag#refs/tags/}"
@@ -75,16 +75,22 @@ jobs:
         run: cmake --build build/juce-core --parallel 2
       - name: Run CTest
         run: ctest --test-dir build/juce-core --output-on-failure
-      - name: Run package self-test without CUDA
-        run: build/juce-core/GPU-Stress-JUCE-CLI --self-test
-      - name: Run end-to-end synthetic CLI
+      - name: Run silent package self-test
         run: |
-          build/juce-core/GPU-Stress-JUCE-CLI \
+          build/juce-core/GPU-Stress-JUCE-CLI --self-test > build/juce-core/self-test.out 2> build/juce-core/self-test.err
+          test ! -s build/juce-core/self-test.out
+          test ! -s build/juce-core/self-test.err
+      - name: Verify synthetic run has no output or files
+        run: |
+          set -euo pipefail
+          mkdir -p build/juce-core/silent-run
+          "$GITHUB_WORKSPACE/build/juce-core/GPU-Stress-JUCE-CLI" \
             --dry-run --duration 1 --load 87 \
-            --output-dir build/juce-core/ci-runs
-          test -f build/juce-core/ci-runs/gpu-stress-juce-console.log
-          test -f build/juce-core/ci-runs/gpu-stress-juce-telemetry.csv
-          test ! -f build/juce-core/ci-runs/gpu-stress-juce.pid
+            > build/juce-core/silent-run.out \
+            2> build/juce-core/silent-run.err
+          test ! -s build/juce-core/silent-run.out
+          test ! -s build/juce-core/silent-run.err
+          test -z "$(find build/juce-core/silent-run -mindepth 1 -print -quit)"
 
   windows-release:
     needs: prepare
@@ -120,13 +126,9 @@ jobs:
         run: |
           $bundle = Join-Path $PWD "dist\GPU-Stress-JUCE-Backup-Windows-x64"
           New-Item -ItemType Directory -Force -Path $bundle | Out-Null
-
-          $gui = Get-ChildItem build\juce-windows -Recurse -Filter "GPU-Stress-JUCE.exe" |
-            Select-Object -First 1
-          $cli = Get-ChildItem build\juce-windows -Recurse -Filter "GPU-Stress-JUCE-CLI.exe" |
-            Select-Object -First 1
+          $gui = Get-ChildItem build\juce-windows -Recurse -Filter "GPU-Stress-JUCE.exe" | Select-Object -First 1
+          $cli = Get-ChildItem build\juce-windows -Recurse -Filter "GPU-Stress-JUCE-CLI.exe" | Select-Object -First 1
           if (-not $gui -or -not $cli) { throw "Built JUCE GUI or CLI executable was not found" }
-
           Copy-Item $gui.FullName (Join-Path $bundle "GPU-Stress-JUCE.exe")
           Copy-Item $gui.FullName (Join-Path $bundle "GPU-Stress-JUCE-Background.exe")
           Copy-Item $cli.FullName (Join-Path $bundle "GPU-Stress-JUCE-CLI.exe")
@@ -134,41 +136,45 @@ jobs:
           Copy-Item docs\JUCE_WAVEMIX_BACKUP_GUIDE.md $bundle
           Copy-Item native-juce\THIRD_PARTY_NOTICES.md $bundle
           Copy-Item native-juce\README.md (Join-Path $bundle "README-JUCE-BACKUP.md")
-          Copy-Item build\juce-windows\_deps\juce-src\LICENSE.md `
-            (Join-Path $bundle "JUCE-LICENSE.md")
+          Copy-Item build\juce-windows\_deps\juce-src\LICENSE.md (Join-Path $bundle "JUCE-LICENSE.md")
           Set-Content -Path (Join-Path $bundle "SOURCE-COMMIT.txt") -Value $env:GITHUB_SHA
-      - name: Validate Windows package
+      - name: Validate silent Windows package and tray lifecycle
         shell: pwsh
         run: |
           $bundle = Join-Path $PWD "dist\GPU-Stress-JUCE-Backup-Windows-x64"
-          & (Join-Path $bundle "GPU-Stress-JUCE-CLI.exe") --help
           & (Join-Path $bundle "GPU-Stress-JUCE-CLI.exe") --self-test
           if ($LASTEXITCODE -ne 0) { throw "CLI self-test failed" }
 
-          $gui = Start-Process (Join-Path $bundle "GPU-Stress-JUCE.exe") `
-            -ArgumentList "--gui-smoke" -PassThru
-          if (-not $gui.WaitForExit(15000)) { $gui.Kill(); throw "GUI smoke test timed out" }
-          if ($gui.ExitCode -ne 0) { throw "GUI smoke test failed" }
+          $silentDir = Join-Path $PWD "build\juce-windows\silent-run"
+          New-Item -ItemType Directory -Force -Path $silentDir | Out-Null
+          $stdout = Join-Path $PWD "build\juce-windows\silent.stdout"
+          $stderr = Join-Path $PWD "build\juce-windows\silent.stderr"
+          $cliProcess = Start-Process (Join-Path $bundle "GPU-Stress-JUCE-CLI.exe") `
+            -ArgumentList "--dry-run","--duration","1","--load","87" `
+            -WorkingDirectory $silentDir -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr -PassThru -Wait
+          if ($cliProcess.ExitCode -ne 0) { throw "Silent CLI run failed" }
+          if ((Get-Item $stdout).Length -ne 0 -or (Get-Item $stderr).Length -ne 0) {
+            throw "Silent CLI produced terminal output"
+          }
+          if ((Get-ChildItem $silentDir -Force | Measure-Object).Count -ne 0) {
+            throw "Silent CLI created files"
+          }
 
-          $runDir = Join-Path $bundle "CI-Background-Runs"
+          $gui = Start-Process (Join-Path $bundle "GPU-Stress-JUCE.exe") -ArgumentList "--gui-smoke" -PassThru
+          if (-not $gui.WaitForExit(15000)) { $gui.Kill(); throw "GUI tray smoke test timed out" }
+          if ($gui.ExitCode -ne 0) { throw "GUI tray smoke test failed" }
+
+          $backgroundDir = Join-Path $PWD "build\juce-windows\background-run"
+          New-Item -ItemType Directory -Force -Path $backgroundDir | Out-Null
           $background = Start-Process (Join-Path $bundle "GPU-Stress-JUCE-Background.exe") `
-            -ArgumentList "--dry-run","--duration","1","--load","87","--output-dir",$runDir `
-            -PassThru
-          if (-not $background.WaitForExit(15000)) {
-            $background.Kill()
-            throw "Background dry-run timed out"
-          }
+            -ArgumentList "--dry-run","--duration","1","--load","87" `
+            -WorkingDirectory $backgroundDir -PassThru
+          if (-not $background.WaitForExit(15000)) { $background.Kill(); throw "Background dry-run timed out" }
           if ($background.ExitCode -ne 0) { throw "Background dry-run failed" }
-          if (-not (Test-Path (Join-Path $runDir "gpu-stress-juce-console.log"))) {
-            throw "Background log is missing"
+          if ((Get-ChildItem $backgroundDir -Force | Measure-Object).Count -ne 0) {
+            throw "Background mode created files"
           }
-          if (-not (Test-Path (Join-Path $runDir "gpu-stress-juce-telemetry.csv"))) {
-            throw "Background CSV is missing"
-          }
-          if (Test-Path (Join-Path $runDir "gpu-stress-juce.pid")) {
-            throw "PID file was not cleaned up"
-          }
-          Remove-Item -Recurse -Force $runDir
       - name: Package Windows ZIP
         shell: pwsh
         run: |
@@ -232,25 +238,30 @@ jobs:
           cp native-juce/README.md "$bundle/README-JUCE-BACKUP.md"
           cp build/juce-linux/_deps/juce-src/LICENSE.md "$bundle/JUCE-LICENSE.md"
           printf '%s\n' "$GITHUB_SHA" > "$bundle/SOURCE-COMMIT.txt"
-      - name: Validate Linux package
+      - name: Validate silent Linux package and tray lifecycle
         shell: bash
         run: |
           set -euo pipefail
           bundle="$PWD/dist/GPU-Stress-JUCE-Backup-Linux-x64"
-          "$bundle/GPU-Stress-JUCE-CLI" --help
-          "$bundle/GPU-Stress-JUCE-CLI" --self-test
+          "$bundle/GPU-Stress-JUCE-CLI" --self-test > build/juce-linux/self-test.out 2> build/juce-linux/self-test.err
+          test ! -s build/juce-linux/self-test.out
+          test ! -s build/juce-linux/self-test.err
+
+          mkdir -p build/juce-linux/silent-run
+          (cd build/juce-linux/silent-run && "$bundle/GPU-Stress-JUCE-CLI" --dry-run --duration 1 --load 87 \
+            > ../silent.stdout 2> ../silent.stderr)
+          test ! -s build/juce-linux/silent.stdout
+          test ! -s build/juce-linux/silent.stderr
+          test -z "$(find build/juce-linux/silent-run -mindepth 1 -print -quit)"
+
           xvfb-run -a "$bundle/GPU-Stress-JUCE" --gui-smoke
-          run_dir="$bundle/CI-Background-Runs"
-          xvfb-run -a "$bundle/GPU-Stress-JUCE-Background" \
-            --dry-run --duration 1 --load 87 --output-dir "$run_dir"
-          test -f "$run_dir/gpu-stress-juce-console.log"
-          test -f "$run_dir/gpu-stress-juce-telemetry.csv"
-          test ! -f "$run_dir/gpu-stress-juce.pid"
-          rm -rf "$run_dir"
+          mkdir -p build/juce-linux/background-run
+          (cd build/juce-linux/background-run && xvfb-run -a "$bundle/GPU-Stress-JUCE-Background" \
+            --dry-run --duration 1 --load 87)
+          test -z "$(find build/juce-linux/background-run -mindepth 1 -print -quit)"
       - name: Package Linux tar archive
         run: |
-          tar -C dist -czf GPU-Stress-JUCE-Backup-Linux-x64.tar.gz \
-            GPU-Stress-JUCE-Backup-Linux-x64
+          tar -C dist -czf GPU-Stress-JUCE-Backup-Linux-x64.tar.gz GPU-Stress-JUCE-Backup-Linux-x64
           size="$(stat -c%s GPU-Stress-JUCE-Backup-Linux-x64.tar.gz)"
           echo "tar_asset_size_bytes=$size"
           test "$size" -lt 2000000000
@@ -262,17 +273,14 @@ jobs:
           mkdir -p AppDir/usr/bin
           gui="$PWD/dist/GPU-Stress-JUCE-Backup-Linux-x64/GPU-Stress-JUCE"
           cli="$PWD/dist/GPU-Stress-JUCE-Backup-Linux-x64/GPU-Stress-JUCE-CLI"
-
           curl --fail --location --retry 3 \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
             -o linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
           APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
-            --appdir AppDir \
-            --executable "$gui" \
+            --appdir AppDir --executable "$gui" \
             --desktop-file native-juce/packaging/appimage/gpu-stress-juce.desktop \
             --icon-file native-juce/packaging/appimage/gpu-stress-juce.svg
-
           cp "$cli" AppDir/usr/bin/GPU-Stress-JUCE-CLI
           rm -f AppDir/AppRun
           cp native-juce/packaging/appimage/AppRun AppDir/AppRun
@@ -282,7 +290,6 @@ jobs:
           cp docs/JUCE_WAVEMIX_BACKUP_GUIDE.md AppDir/
           cp native-juce/THIRD_PARTY_NOTICES.md AppDir/
           cp build/juce-linux/_deps/juce-src/LICENSE.md AppDir/JUCE-LICENSE.md
-
           curl --fail --location --retry 3 \
             https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
             -o appimagetool-x86_64.AppImage
@@ -323,23 +330,20 @@ jobs:
             | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
           cd ..
           cat > release-notes.md <<'EOF'
-          ## JUCE WaveMix backup implementation
+          ## JUCE WaveMix silent tray implementation
 
-          This is an independent native backup for the Quadro P2200 workflow.
+          This native Quadro P2200 backup now focuses only on generating the CUDA WaveMix workload.
 
-          - **GUI:** JUCE 8.0.14 desktop control panel
+          - **GUI:** JUCE 8.0.14 with Windows notification-area tray icon
+          - **Tray controls:** double-click to restore; right-click to show, hide, stop, or exit
           - **No-window mode:** `GPU-Stress-JUCE-Background.exe`
-          - **CLI:** `GPU-Stress-JUCE-CLI.exe`
+          - **CLI:** silent normal runs through `GPU-Stress-JUCE-CLI.exe`
           - **Default:** 96 hours / 87% target duty load
           - **Strategy:** custom CUDA WaveMix short kernels, not cuBLAS GEMM
-          - **Control:** measured active-time duty windows, not NVML PI feedback
           - **Architecture:** includes `sm_61` for Quadro P2200
+          - **Removed:** nvidia-smi polling, temperature guard, terminal progress, logs, CSV, and PID files
 
-          Windows bundles include start/stop/status CMD files and a dedicated Traditional Chinese guide. Linux is provided as both a portable folder archive and AppImage.
-
-          The package tests cover configuration, scheduler math, engine completion/stop/error paths, thermal hysteresis, logging/PID cleanup, CLI self-test, GUI smoke tests, hidden background dry-runs, CUDA compilation, and AppImage startup.
-
-          A compatible NVIDIA driver is still required for the real CUDA backend. GitHub-hosted runners cannot execute the kernel on a physical Quadro P2200, so the release should first be validated with a short 25% run on the target machine.
+          The workflow verifies native unit/integration tests, silent execution, zero generated run files, GUI hide/restore tray lifecycle, hidden background mode, CUDA compilation, Windows ZIP, Linux tar, and AppImage startup.
           EOF
       - name: Create GitHub release
         env:
@@ -350,22 +354,14 @@ jobs:
         run: |
           set -euo pipefail
           prerelease_flag=()
-          if [[ "$PRERELEASE" == "true" ]]; then
-            prerelease_flag+=(--prerelease)
-          fi
+          if [[ "$PRERELEASE" == "true" ]]; then prerelease_flag+=(--prerelease); fi
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
+            gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
               --title "GPU Stress JUCE WaveMix Backup $RELEASE_TAG" \
-              --notes-file release-notes.md \
-              "${prerelease_flag[@]}"
+              --notes-file release-notes.md "${prerelease_flag[@]}"
           else
-            gh release create "$RELEASE_TAG" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "GPU Stress JUCE WaveMix Backup $RELEASE_TAG" \
-              --notes-file release-notes.md \
-              "${prerelease_flag[@]}"
+            gh release create "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "GPU Stress JUCE WaveMix Backup $RELEASE_TAG" \
+              --notes-file release-notes.md "${prerelease_flag[@]}"
           fi
