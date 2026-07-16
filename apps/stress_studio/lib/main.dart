@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'src/app_owner.dart';
 import 'src/controller.dart';
 import 'src/services.dart';
-import 'src/studio_app.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -10,5 +10,5 @@ void main() {
     cpuService: IsolateCpuStressService(),
     gpuService: JuceGpuWorkerService(),
   );
-  runApp(StressStudioApp(controller: controller));
+  runApp(OwnedStressStudioApp(controller: controller));
 }
