@@ -1,0 +1,40 @@
+name: Format PR 11 Dart sources
+
+on:
+  pull_request_target:
+    types: [synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: >-
+      github.event.pull_request.number == 11 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/fix-flutter-ui-responsiveness'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-flutter-ui-responsiveness
+          persist-credentials: true
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+      - name: Format repository-owned Dart sources
+        working-directory: apps/stress_studio
+        run: dart format lib test
+      - name: Commit formatting only
+        run: |
+          if git diff --quiet -- apps/stress_studio/lib apps/stress_studio/test; then
+            echo 'Dart sources already match Flutter 3.44 formatting.'
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/stress_studio/lib apps/stress_studio/test
+          git commit -m 'Format Flutter v0.2 sources'
+          git push origin HEAD:agent/fix-flutter-ui-responsiveness
