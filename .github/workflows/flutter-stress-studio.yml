@@ -6,7 +6,7 @@ on:
       release_tag:
         description: GitHub Release tag to create or update
         required: true
-        default: stress-studio-v0.2.0
+        default: compute-stress-studio-v0.2.0
         type: string
       release_title:
         description: Human-readable release title
@@ -16,7 +16,7 @@ on:
       release_notes_file:
         description: Repository-relative Markdown release notes file
         required: true
-        default: docs/releases/NEXT.md
+        default: docs/releases/compute-stress-studio-v0.2.0.md
         type: string
       prerelease:
         description: Mark the GitHub release as a prerelease
@@ -27,10 +27,14 @@ on:
     branches: [main]
     paths: &flutter-studio-paths
       - apps/stress_studio/**
+      - native-cpu/**
       - native-juce/**
+      - release/compute-stress-studio/**
       - docs/FLUTTER_STRESS_STUDIO_SPEC.md
       - docs/JUCE_WAVEMIX_BACKUP_GUIDE.md
+      - docs/DEVELOPMENT.md
       - docs/RELEASES.md
+      - docs/releases/compute-stress-studio-*.md
       - README.md
       - .github/workflows/flutter-stress-studio.yml
   pull_request:
@@ -49,6 +53,105 @@ env:
   APP_DIR: apps/stress_studio
 
 jobs:
+  release-metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.meta.outputs.should_release }}
+      tag: ${{ steps.meta.outputs.tag }}
+      title: ${{ steps.meta.outputs.title }}
+      notes_file: ${{ steps.meta.outputs.notes_file }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: meta
+        shell: bash
+        env:
+          DISPATCH_TAG: ${{ inputs.release_tag }}
+          DISPATCH_TITLE: ${{ inputs.release_title }}
+          DISPATCH_NOTES: ${{ inputs.release_notes_file }}
+          DISPATCH_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          should_release=false
+          tag=''
+          title=''
+          notes_file=''
+          prerelease=true
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            should_release=true
+            tag="$DISPATCH_TAG"
+            title="$DISPATCH_TITLE"
+            notes_file="$DISPATCH_NOTES"
+            prerelease="$DISPATCH_PRERELEASE"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            before="${{ github.event.before }}"
+            if [[ "$before" == "0000000000000000000000000000000000000000" ]]; then
+              changed_files="$(git show --pretty='' --name-only "$GITHUB_SHA")"
+            else
+              changed_files="$(git diff --name-only "$before" "$GITHUB_SHA")"
+            fi
+            request_file="$(printf '%s\n' "$changed_files" | grep -E '^release/compute-stress-studio/[^/]+\.json$' | tail -n1 || true)"
+            if [[ -n "$request_file" ]]; then
+              should_release=true
+              mapfile -t metadata < <(python - "$request_file" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          for key in ('tag', 'title', 'notes_file', 'prerelease'):
+              if key not in data:
+                  raise SystemExit(f'missing release request key: {key}')
+          print(data['tag'])
+          print(data['title'])
+          print(data['notes_file'])
+          print(str(bool(data['prerelease'])).lower())
+          PY
+              )
+              tag="${metadata[0]}"
+              title="${metadata[1]}"
+              notes_file="${metadata[2]}"
+              prerelease="${metadata[3]}"
+            fi
+          fi
+
+          if [[ "$should_release" == "true" ]]; then
+            tag="${tag#refs/tags/}"
+            if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              echo "Invalid release tag: $tag" >&2
+              exit 1
+            fi
+            if [[ -z "$title" ]]; then
+              echo "Release title must not be empty" >&2
+              exit 1
+            fi
+            if [[ "$notes_file" = /* || "$notes_file" == *".."* || ! -f "$notes_file" ]]; then
+              echo "Invalid release notes file: $notes_file" >&2
+              exit 1
+            fi
+          fi
+
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  cpu-worker-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CPU worker
+        run: cmake -S native-cpu -B build/cpu-worker -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build CPU worker
+        run: cmake --build build/cpu-worker --parallel 2
+      - name: Test CPU worker
+        run: ctest --test-dir build/cpu-worker --output-on-failure
+
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -94,6 +197,15 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         shell: pwsh
         run: flutter create --platforms=windows --org com.pme26elvis --project-name stress_studio .
+      - name: Build low-priority CPU worker
+        shell: pwsh
+        run: |
+          cmake -S native-cpu -B build/flutter-cpu-windows `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DCOMPUTE_STRESS_CPU_BUILD_TESTS=ON `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build build/flutter-cpu-windows --config Release --parallel 2
+          ctest --test-dir build/flutter-cpu-windows -C Release --output-on-failure
       - name: Build JUCE GPU worker
         shell: pwsh
         run: |
@@ -118,16 +230,26 @@ jobs:
           $bundle = Join-Path $PWD "dist\Compute-Stress-Studio-Windows-x64"
           New-Item -ItemType Directory -Force -Path $bundle | Out-Null
           Copy-Item "$source\*" $bundle -Recurse -Force
-          $worker = Get-ChildItem build\flutter-juce-windows -Recurse -Filter "GPU-Stress-JUCE.exe" | Select-Object -First 1
-          if (-not $worker) { throw "JUCE GPU worker was not found" }
-          Copy-Item $worker.FullName (Join-Path $bundle "GPU-Stress-JUCE-Background.exe")
+
+          $cpuWorker = Get-ChildItem build\flutter-cpu-windows -Recurse -Filter "Compute-Stress-CPU-Worker.exe" | Select-Object -First 1
+          if (-not $cpuWorker) { throw "CPU worker was not found" }
+          Copy-Item $cpuWorker.FullName (Join-Path $bundle "Compute-Stress-CPU-Worker.exe")
+
+          $gpuWorker = Get-ChildItem build\flutter-juce-windows -Recurse -Filter "GPU-Stress-JUCE.exe" | Select-Object -First 1
+          if (-not $gpuWorker) { throw "JUCE GPU worker was not found" }
+          Copy-Item $gpuWorker.FullName (Join-Path $bundle "GPU-Stress-JUCE-Background.exe")
+
           Copy-Item README.md $bundle
           Copy-Item docs\FLUTTER_STRESS_STUDIO_SPEC.md $bundle
           Copy-Item docs\RELEASES.md $bundle
           Copy-Item docs\JUCE_WAVEMIX_BACKUP_GUIDE.md $bundle
           Copy-Item native-juce\THIRD_PARTY_NOTICES.md $bundle
           Set-Content -Path (Join-Path $bundle "SOURCE-COMMIT.txt") -Value $env:GITHUB_SHA
+
+          & (Join-Path $bundle "Compute-Stress-CPU-Worker.exe") --self-test
+          if ($LASTEXITCODE -ne 0) { throw "CPU worker self-test failed" }
           if (-not (Test-Path (Join-Path $bundle "stress_studio.exe"))) { throw "Flutter executable is missing" }
+          if (-not (Test-Path (Join-Path $bundle "Compute-Stress-CPU-Worker.exe"))) { throw "CPU worker is missing" }
           if (-not (Test-Path (Join-Path $bundle "GPU-Stress-JUCE-Background.exe"))) { throw "GPU worker is missing" }
           Compress-Archive -Path "$bundle\*" -DestinationPath Compute-Stress-Studio-Windows-x64.zip -CompressionLevel Optimal
       - uses: actions/upload-artifact@v4
@@ -163,6 +285,13 @@ jobs:
       - name: Generate Linux scaffolding
         working-directory: ${{ env.APP_DIR }}
         run: flutter create --platforms=linux --org com.pme26elvis --project-name stress_studio .
+      - name: Build low-priority CPU worker
+        run: |
+          cmake -S native-cpu -B build/flutter-cpu-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCOMPUTE_STRESS_CPU_BUILD_TESTS=ON
+          cmake --build build/flutter-cpu-linux --parallel 2
+          ctest --test-dir build/flutter-cpu-linux --output-on-failure
       - name: Build JUCE GPU worker
         run: |
           cmake -S native-juce -B build/flutter-juce-linux -G Ninja \
@@ -184,16 +313,25 @@ jobs:
           bundle="$PWD/dist/Compute-Stress-Studio-Linux-x64"
           mkdir -p "$bundle"
           cp -a "$source_dir/." "$bundle/"
-          worker="$(find build/flutter-juce-linux -type f -name GPU-Stress-JUCE -perm -111 | head -n1)"
-          test -n "$worker"
-          cp "$worker" "$bundle/GPU-Stress-JUCE-Background"
+
+          cpu_worker="$(find build/flutter-cpu-linux -type f -name Compute-Stress-CPU-Worker -perm -111 | head -n1)"
+          test -n "$cpu_worker"
+          cp "$cpu_worker" "$bundle/Compute-Stress-CPU-Worker"
+
+          gpu_worker="$(find build/flutter-juce-linux -type f -name GPU-Stress-JUCE -perm -111 | head -n1)"
+          test -n "$gpu_worker"
+          cp "$gpu_worker" "$bundle/GPU-Stress-JUCE-Background"
+
           cp README.md "$bundle/"
           cp docs/FLUTTER_STRESS_STUDIO_SPEC.md "$bundle/"
           cp docs/RELEASES.md "$bundle/"
           cp docs/JUCE_WAVEMIX_BACKUP_GUIDE.md "$bundle/"
           cp native-juce/THIRD_PARTY_NOTICES.md "$bundle/"
           printf '%s\n' "$GITHUB_SHA" > "$bundle/SOURCE-COMMIT.txt"
+
+          "$bundle/Compute-Stress-CPU-Worker" --self-test
           test -x "$bundle/stress_studio"
+          test -x "$bundle/Compute-Stress-CPU-Worker"
           test -x "$bundle/GPU-Stress-JUCE-Background"
           tar -C dist -czf Compute-Stress-Studio-Linux-x64.tar.gz Compute-Stress-Studio-Linux-x64
       - uses: actions/upload-artifact@v4
@@ -204,8 +342,8 @@ jobs:
           retention-days: 5
 
   release:
-    if: github.event_name == 'workflow_dispatch'
-    needs: [quality, windows-package, linux-package]
+    if: ${{ always() && needs.release-metadata.outputs.should_release == 'true' && needs.cpu-worker-tests.result == 'success' && needs.quality.result == 'success' && needs.windows-package.result == 'success' && needs.linux-package.result == 'success' }}
+    needs: [release-metadata, cpu-worker-tests, quality, windows-package, linux-package]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -213,61 +351,23 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
-
-      - name: Validate release metadata
-        id: meta
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ inputs.release_tag }}"
-          title="${{ inputs.release_title }}"
-          notes_file="${{ inputs.release_notes_file }}"
-          tag="${tag#refs/tags/}"
-
-          if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "Invalid release tag: $tag" >&2
-            exit 1
-          fi
-          if [[ -z "$title" ]]; then
-            echo "Release title must not be empty" >&2
-            exit 1
-          fi
-          if [[ "$notes_file" = /* || "$notes_file" == *".."* ]]; then
-            echo "release_notes_file must be a safe repository-relative path" >&2
-            exit 1
-          fi
-          if [[ ! -f "$notes_file" ]]; then
-            echo "Release notes file does not exist: $notes_file" >&2
-            exit 1
-          fi
-
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "title=$title" >> "$GITHUB_OUTPUT"
-          echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
-
       - name: Generate checksums
-        shell: bash
         run: |
-          set -euo pipefail
           cd release-assets
           find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
             | sort -z \
             | xargs -0 sha256sum > SHA256SUMS.txt
-
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
-          RELEASE_TITLE: ${{ steps.meta.outputs.title }}
-          NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
-          PRERELEASE: ${{ inputs.prerelease }}
-        shell: bash
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
+          RELEASE_TITLE: ${{ needs.release-metadata.outputs.title }}
+          NOTES_FILE: ${{ needs.release-metadata.outputs.notes_file }}
+          PRERELEASE: ${{ needs.release-metadata.outputs.prerelease }}
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
+            gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$RELEASE_TITLE" \
@@ -283,9 +383,8 @@ jobs:
               --notes-file "$NOTES_FILE" \
               "${flags[@]}"
           fi
-
       - name: Verify published release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
         run: gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
