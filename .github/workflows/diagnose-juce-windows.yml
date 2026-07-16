@@ -1,0 +1,109 @@
+name: Diagnose JUCE Windows CUDA
+
+on:
+  pull_request:
+    paths:
+      - native-juce/**
+      - .github/workflows/diagnose-juce-windows.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: '12.6.3'
+          method: local
+      - name: Configure with focused output
+        id: configure
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build\juce-windows | Out-Null
+          cmake -S native-juce -B build/juce-windows `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DGPU_STRESS_ENABLE_CUDA=ON `
+            -DGPU_STRESS_BUILD_GUI=ON `
+            -DGPU_STRESS_BUILD_TESTS=ON `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            *> build\juce-windows\configure.log
+          $status = $LASTEXITCODE
+          "status=$status" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Get-Content build\juce-windows\configure.log -Tail 120
+          exit 0
+      - name: Upload configure log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: juce-windows-configure-log
+          path: build/juce-windows/configure.log
+          retention-days: 3
+      - name: Fail when configure failed
+        if: steps.configure.outputs.status != '0'
+        run: exit 1
+      - name: Build with focused output
+        id: build
+        shell: pwsh
+        run: |
+          cmake --build build/juce-windows --config Release --parallel 2 `
+            *> build\juce-windows\build.log
+          $status = $LASTEXITCODE
+          "status=$status" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Get-Content build\juce-windows\build.log -Tail 180
+          exit 0
+      - name: Upload compiler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: juce-windows-build-log
+          path: build/juce-windows/build.log
+          retention-days: 3
+      - name: Fail when build failed
+        if: steps.build.outputs.status != '0'
+        run: exit 1
+      - name: Run tests and package smoke
+        shell: pwsh
+        run: |
+          ctest --test-dir build/juce-windows -C Release --output-on-failure
+          $gui = Get-ChildItem build\juce-windows -Recurse -Filter "GPU-Stress-JUCE.exe" |
+            Select-Object -First 1
+          $cli = Get-ChildItem build\juce-windows -Recurse -Filter "GPU-Stress-JUCE-CLI.exe" |
+            Select-Object -First 1
+          if (-not $gui -or -not $cli) { throw "Built GUI or CLI executable was not found" }
+
+          & $cli.FullName --self-test
+          if ($LASTEXITCODE -ne 0) { throw "CLI self-test failed" }
+
+          $guiProcess = Start-Process $gui.FullName -ArgumentList "--gui-smoke" -PassThru
+          if (-not $guiProcess.WaitForExit(15000)) {
+            $guiProcess.Kill()
+            throw "GUI smoke test timed out"
+          }
+          if ($guiProcess.ExitCode -ne 0) { throw "GUI smoke test failed" }
+
+          $backgroundPath = Join-Path $gui.DirectoryName "GPU-Stress-JUCE-Background.exe"
+          Copy-Item $gui.FullName $backgroundPath -Force
+          $runDir = Join-Path $PWD "build\juce-windows\background-runs"
+          $background = Start-Process $backgroundPath `
+            -ArgumentList "--dry-run","--duration","1","--load","87","--output-dir",$runDir `
+            -PassThru
+          if (-not $background.WaitForExit(15000)) {
+            $background.Kill()
+            throw "Background dry-run timed out"
+          }
+          if ($background.ExitCode -ne 0) { throw "Background dry-run failed" }
+          if (-not (Test-Path (Join-Path $runDir "gpu-stress-juce-console.log"))) {
+            throw "Background log is missing"
+          }
+          if (-not (Test-Path (Join-Path $runDir "gpu-stress-juce-telemetry.csv"))) {
+            throw "Background CSV is missing"
+          }
+          if (Test-Path (Join-Path $runDir "gpu-stress-juce.pid")) {
+            throw "PID file was not cleaned up"
+          }
