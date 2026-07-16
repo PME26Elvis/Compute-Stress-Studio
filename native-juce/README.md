@@ -17,21 +17,33 @@ The defaults remain personalized for the Quadro P2200 machine:
 Duration: 345600 seconds (96 hours)
 Target duty load: 87%
 VRAM budget: 192 MiB
-Thermal pause limit: 85 C
 Duty window: 200 ms
 Kernel target: 8 ms
 ```
+
+## Silent design
+
+The native JUCE version now focuses only on generating the workload. Normal runs:
+
+- do not launch `nvidia-smi` or any other monitoring subprocess;
+- do not print periodic terminal progress;
+- do not create logs, CSV telemetry, startup-error logs, or PID files;
+- do not implement an application-level temperature guard.
+
+The GPU driver, firmware, clock throttling, and hardware protection remain responsible for the device's own thermal behavior. Use a separate monitoring tool if you want temperature, power, clock, or utilization visibility.
 
 ## Delivered applications
 
 Windows releases contain:
 
-- `GPU-Stress-JUCE.exe` — JUCE GUI;
+- `GPU-Stress-JUCE.exe` — JUCE GUI and notification-area application;
 - `GPU-Stress-JUCE-Background.exe` — no-window background alias;
-- `GPU-Stress-JUCE-CLI.exe` — console/automation interface;
+- `GPU-Stress-JUCE-CLI.exe` — silent console/automation interface;
 - start, stop, and status CMD files.
 
-Linux releases contain the corresponding GUI/CLI folder and an AppImage.
+The GUI creates a notification-area icon, commonly called the system tray icon on Windows. Closing or minimising the GUI hides it to the tray instead of terminating the workload. Double-click the icon to restore the window. Right-click it to show the window, hide it, stop the stress run, or exit the application.
+
+Linux releases contain the corresponding GUI/CLI folder and an AppImage. Tray behavior depends on the desktop environment's system-tray implementation.
 
 ## Build
 
@@ -53,6 +65,8 @@ cmake -S native-juce -B build/native-core \
 cmake --build build/native-core
 ctest --test-dir build/native-core --output-on-failure
 ```
+
+The release workflow additionally verifies that a normal CLI or background dry-run produces no stdout/stderr output and creates no run files, and that the GUI can hide to and restore from the tray lifecycle.
 
 ## Licensing
 
