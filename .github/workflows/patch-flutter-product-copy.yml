@@ -2,9 +2,8 @@ name: Patch Flutter product copy
 
 on:
   push:
-    branches: [agent/fix-flutter-ui-responsiveness]
+    branches: [main]
     paths:
-      - patches/pr11-ui-trigger
       - .github/workflows/patch-flutter-product-copy.yml
 
 permissions:
@@ -69,7 +68,7 @@ jobs:
                   raise SystemExit('missing expected GPU diagnostic tile')
               text = text.replace(gpu_tile, worker_tiles, 1)
           path.write_text(text, encoding='utf-8')
-      - name: Format and commit
+      - name: Format and commit to PR branch
         run: |
           dart format apps/stress_studio/lib/src/studio_app.dart
           if git diff --quiet; then
