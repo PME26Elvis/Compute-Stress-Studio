@@ -1,154 +1,158 @@
-# Development Notes
+# Architecture and development
 
-## Repository components
+This document describes the current repository as a whole. Subsystem guides cover operator details; this file explains boundaries, contracts, and validation.
 
-- `main.py`, `main_window.py`, `stress_test.py`: original PyQt CPU monitor/stress application.
-- `cpu_stress_cli.py`: standalone CPU duty-cycle stress CLI.
-- `gpu_stress_cli.py`: full adaptive NVIDIA GPU stress CLI.
-- `gpu_stress_portable.py`: frozen-app entry point that configures bundled CUDA libraries, applies personal defaults, and forces CuPy.
-- `gpu_stress_background.py`: Windows-only hidden launcher for the Quadro P2200 personal workflow.
-- `packaging/gpu_stress_portable.spec`: PyInstaller one-folder worker definition.
-- `packaging/gpu_stress_background.spec`: PyInstaller one-file Windows GUI-subsystem launcher definition.
-- `packaging/appimage/*`: AppDir launcher, desktop metadata, and icon.
-- `Dockerfile.gpu`: CUDA 12 runtime container using the CuPy backend.
-- `docker-compose.gpu.yml`: Compose launcher with GPU reservation and personal defaults.
-- `tests/test_gpu_stress_cli.py`: parser, profile, sizing, and controller tests.
-- `tests/test_gpu_stress_portable.py`: portable backend and 96-hour/87-percent default tests.
-- `tests/test_gpu_stress_background.py`: hidden launcher argument tests.
-- `docs/QUADRO_P2200_PERSONAL_PRESET.md`: user-specific Traditional Chinese operation guide.
+## Repository architecture
 
-GPU modules do not import a CUDA framework at module import time. This keeps static checks, `--help`, and CPU-only tests usable on runners without NVIDIA hardware.
+```text
+Compute Stress Studio repository
+|
++-- apps/stress_studio/       Flutter CPU+GPU control plane
+|   +-- Dart isolate CPU adapter
+|   +-- external JUCE GPU adapter
+|
++-- native-juce/              C++20/JUCE CUDA WaveMix engine
+|   +-- GUI/tray application
+|   +-- silent CLI
+|   +-- hidden background executable
+|
++-- gpu_stress_cli.py         adaptive Python NVIDIA CLI
+|   +-- NVML / nvidia-smi / open-loop monitoring
+|   +-- PyTorch / CuPy / Numba compute backends
+|
++-- packaging/                PyInstaller and AppImage delivery
++-- main.py + PyQt modules    original Linux CPU monitor
++-- cpu_stress_cli.py         standalone CPU CLI
++-- tests/                    Python and packaging tests
+```
 
-## GPU architecture
+The repository intentionally keeps multiple independent engines. They are not duplicate ports:
 
-### Monitoring layer
+- Flutter is the modern orchestration and UX layer.
+- JUCE WaveMix is the native GPU worker and an independent fallback application.
+- The Python GPU CLI is the adaptive, telemetry-aware implementation.
+- The original CPU tools remain useful standalone utilities.
+
+## Flutter control plane
+
+### Ownership and lifecycle
+
+`OwnedStressStudioApp` owns `StudioController` in production. Removing the root widget disposes the controller, which begins stopping CPU isolates and the GPU child process. The presentational `StressStudioApp` accepts an injected controller so widget tests can remain deterministic.
+
+### State and transaction model
+
+`StudioController` owns:
+
+- immutable `RunConfiguration`;
+- idle, starting, running, stopping, completed, and error states;
+- one coordinated duration and elapsed timer;
+- bounded in-memory history;
+- start rollback and idempotent stop;
+- theme and selected-page state.
+
+Start validates first, then starts enabled services together. Any startup failure stops both services before exposing the error. Configuration changes are rejected while active.
+
+### CPU service
+
+`IsolateCpuStressService` creates one Dart isolate per selected worker. Each isolate uses a short duty window with compute followed by sleep. The UI isolate never performs the hot loop, and `Isolate.kill(priority: Isolate.immediate)` provides bounded stop behavior.
+
+The target is a duty request, not a promise of total system utilization. OS scheduling, SMT topology, processor power policy, and other work affect measured results.
+
+### GPU service
+
+`JuceGpuWorkerService` expects the silent native worker beside the Flutter executable and passes:
+
+```text
+--duration <seconds>
+--load <percent>
+--memory-mib <budget>
+--device <index>
+```
+
+The service drains child output, checks for early exit, requests graceful termination, and escalates to forced termination after timeout. The process boundary keeps CUDA failures and future backend replacement separate from the Flutter UI architecture.
+
+## Native JUCE WaveMix engine
+
+The native implementation uses a calibrated CUDA WaveMix kernel with FP32 arithmetic, integer scrambling, and memory traffic. A measured active-time scheduler applies duty control over a fixed window.
+
+Release builds include `sm_61` for the Quadro P2200 and selected newer architectures. The native application deliberately avoids recurring telemetry, log files, and `nvidia-smi` subprocesses during normal runs.
+
+Entry points:
+
+```text
+GPU-Stress-JUCE.exe                 GUI and notification-area app
+GPU-Stress-JUCE-Background.exe      hidden no-window application
+GPU-Stress-JUCE-CLI.exe             silent command-line application
+```
+
+On Linux the same roles are provided without the `.exe` suffix, subject to desktop tray support.
+
+## Adaptive Python GPU engine
+
+### Monitoring fallback
 
 `make_monitor()` attempts:
 
-1. `NvmlMonitor` through `nvidia-ml-py`;
-2. `NvidiaSmiMonitor` through the driver CLI;
+1. NVML through `nvidia-ml-py`;
+2. `nvidia-smi` CSV output;
 3. `NullMonitor` for open-loop duty control.
 
-### Compute layer
+### Compute fallback
 
 `make_backend()` attempts:
 
-1. `TorchBackend`;
-2. `CupyBackend`;
-3. `NumbaBackend`.
+1. PyTorch/cuBLAS;
+2. CuPy/cuBLAS;
+3. a Numba CUDA kernel.
 
-The portable packages force CuPy. Torch and CuPy reuse three matrices and a preallocated output buffer. Numba uses a compute-heavy custom CUDA kernel.
+Optional CUDA frameworks are imported lazily so help, parsing, static checks, and CPU-only tests work on non-GPU runners.
 
-### Load-control layer
+### Load control
 
-Each `run_chunk()` synchronizes before returning. The scheduler uses a work-credit accumulator over fixed periods so the long-term duty cycle remains meaningful even when a requested work slice is shorter than a calibrated kernel chunk.
-
-When utilization telemetry exists, `UtilizationController` uses an EMA-filtered PI correction. Large target changes reset controller state.
+Each backend synchronizes before returning from a chunk. A work-credit accumulator preserves long-term duty behavior when one calibrated chunk is longer than an instantaneous budget. With utilization telemetry, an EMA-filtered PI controller corrects duty toward the device-wide target.
 
 ### Memory policy
 
-`_resolve_budget_mib()` preserves driver/display headroom. `choose_matrix_size()` uses at most 70% of the effective budget for three resident tensors, aligns dimensions to 256, and retries smaller allocations after OOM.
+The CLI preserves driver/display headroom, uses only a fraction of the requested budget for resident tensors, aligns matrix dimensions, reuses buffers, and retries smaller allocations after out-of-memory errors.
 
-## Personal default layer
+## Portable Python distribution
 
-`gpu_stress_portable.py` defines:
+The portable worker intentionally forces CuPy rather than bundling all three Python GPU frameworks. This avoids duplicated CUDA runtimes and reduces platform-specific DLL/JIT failure modes.
 
-```text
-DEFAULT_DURATION_SECONDS = 345600
-DEFAULT_LOAD_PERCENT = 87.0
-```
+`gpu_stress_portable.py` applies packaged defaults only when the user omitted explicit values. Source `gpu_stress_cli.py` still requires an explicit duration so a source checkout never starts the 96-hour personal run unexpectedly.
 
-`_apply_personal_defaults()`:
+The Windows hidden launcher is a small GUI-subsystem executable that starts the larger one-folder worker detached and tracks one PID file. It uses stable executable names so a manual `taskkill` remains possible.
 
-- adds duration only when `--duration` is absent;
-- adds load only when both `--load` and `--profile` are absent;
-- preserves split and equals-style options;
-- leaves `--help`, `--diagnose`, and `--list-gpus` untouched.
+## Original CPU applications
 
-`build_portable_arguments()` then forces `--backend cupy`.
+- `main.py`, `main_window.py`, and `stress_test.py` implement the original Linux PyQt monitor/stress GUI.
+- `cpu_stress_cli.py` implements constant, pulsed, and ramp CPU load from the command line.
 
-The source `gpu_stress_cli.py` is intentionally unchanged and still requires an explicit duration. This prevents a source checkout from unexpectedly starting a 96-hour run while making packaged delivery convenient for the user's machine.
+These tools do not depend on Flutter or the NVIDIA GPU stack.
 
-## Windows hidden launcher
+## Release workflows
 
-`gpu_stress_background.py` is frozen with `console=False`, so Windows does not allocate a console window when it is double-clicked or launched from CMD.
+### Flutter desktop
 
-The launcher locates `GPU-Stress-P2200-Worker.exe` beside itself and starts it with:
+`.github/workflows/flutter-stress-studio.yml` validates pull requests and pushes, builds both platform bundles, and uploads workflow artifacts. GitHub Release publication is manual and idempotent: an explicit dispatch chooses tag, title, notes file, and prerelease state.
 
-- `CREATE_NO_WINDOW`;
-- `DETACHED_PROCESS`;
-- `CREATE_NEW_PROCESS_GROUP`;
-- stdin redirected from `DEVNULL`;
-- stdout/stderr appended to `P2200-Runs/gpu-stress-p2200-console.log`.
+### Release-note maintenance
 
-It writes the worker PID to `P2200-Runs/gpu-stress-p2200.pid`. Before launching, it uses `OpenProcess` and `GetExitCodeProcess` to reject a duplicate active PID.
+`.github/workflows/release-notes-maintenance.yml` edits an existing GitHub Release from a versioned Markdown file without rebuilding assets. It is used for the corrected `stress-studio-v0.1.14` notes and can be dispatched for future note-only fixes.
 
-The stable worker image name enables a simple stop command:
+### Python GPU portable
 
-```cmd
-taskkill /F /T /IM GPU-Stress-P2200-Worker.exe
-```
+`.github/workflows/release-gpu-packages.yml` builds Windows/Linux portable packages, AppImage, Docker/GHCR delivery, checksums, and release assets. It remains a separate channel because the runtime and artifact set differ from the Flutter desktop app.
 
-The release workflow also copies the worker to `GPU-Stress-Portable.exe` as a compatibility alias. The background launcher always uses the P2200-specific worker name.
+### Native JUCE
 
-## Portable CUDA discovery
+The native workflow builds Windows and Linux entry points, exercises core/native tests, validates silent behavior and GUI/tray lifecycle where supported, and packages independent fallback releases.
 
-CUDA component wheels install under the `nvidia` Python namespace. The spec copies the namespace into the one-folder application. Before importing CuPy, the portable entry point:
-
-1. finds component `bin`, `lib`, `lib64`, and `lib/x64` directories;
-2. prepends them to process search paths;
-3. registers Windows DLL directories;
-4. explicitly preloads Linux CUDA shared objects globally;
-5. sets `CUDA_PATH` when needed;
-6. places the CuPy cache in the user's normal cache directory.
-
-The host display driver remains external.
-
-## AppImage architecture
-
-The Linux job first builds and validates the PyInstaller one-folder package. It then creates:
-
-```text
-AppDir/
-  AppRun
-  gpu-stress.desktop
-  gpu-stress.svg
-  .DirIcon
-  usr/bin/GPU-Stress-Portable/
-  usr/share/applications/
-  usr/share/icons/hicolor/scalable/apps/
-```
-
-`AppRun` resolves its own directory and executes the bundled portable CLI while forwarding all arguments. The official AppImageKit `appimagetool` continuous build creates `GPU-Stress-Portable-x86_64.AppImage`.
-
-CI runs the resulting AppImage with `APPIMAGE_EXTRACT_AND_RUN=1 --help`, avoiding a dependency on FUSE in the hosted runner.
-
-## Container architecture
-
-`Dockerfile.gpu` starts from an NVIDIA CUDA 12 runtime image and installs CuPy plus NVML bindings. The entry point forces CuPy and the default CMD supplies 345600 seconds, 87%, and CSV output under `/results`.
-
-NVIDIA Container Toolkit injects the host driver-facing libraries and selected GPU devices. The image never includes the host display driver.
-
-## Release workflow
-
-`.github/workflows/release-gpu-packages.yml`:
-
-1. resolves a manual tag or automatic `gpu-v0.3.<run-number>` tag;
-2. builds the Windows worker;
-3. builds the no-console Windows background launcher;
-4. assembles the scripts and P2200 guide into the Windows ZIP;
-5. builds the Linux folder package;
-6. builds and validates the AppImage;
-7. builds, validates, pushes, and exports the Docker image;
-8. enforces the 2 GB per-asset ceiling;
-9. generates SHA256 checksums;
-10. creates or updates the GitHub Release.
-
-PR runs build all assets but skip GHCR pushes and GitHub Release creation.
+See [RELEASES.md](RELEASES.md) for the canonical artifact matrix.
 
 ## Local validation
 
-CPU-only validation:
+### Python
 
 ```bash
 python -m py_compile cpu_stress_cli.py gpu_stress_cli.py gpu_stress_portable.py gpu_stress_background.py
@@ -157,48 +161,57 @@ python gpu_stress_cli.py --help
 python gpu_stress_portable.py --help
 ```
 
-Portable worker build:
+### Flutter
 
 ```bash
-python -m PyInstaller --noconfirm --clean packaging/gpu_stress_portable.spec
+cd apps/stress_studio
+flutter create --platforms=windows,linux --org com.pme26elvis --project-name stress_studio .
+flutter pub get
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze
+flutter test --coverage
 ```
 
-Windows background launcher build:
-
-```powershell
-python -m PyInstaller --noconfirm packaging/gpu_stress_background.spec
-```
-
-GPU hardware smoke validation on the Quadro P2200:
-
-```cmd
-GPU-Stress-P2200-Worker.exe --diagnose
-GPU-Stress-P2200-Worker.exe --duration 30 --load 25
-GPU-Stress-P2200-Worker.exe --duration 1800 --load 87
-```
-
-Container validation:
+Build Windows on Windows and Linux on Linux:
 
 ```bash
-docker build -f Dockerfile.gpu -t gpu-stress:local .
-docker run --rm gpu-stress:local --help
-docker run --rm --gpus all gpu-stress:local --diagnose
+flutter build windows --release
+flutter build linux --release
 ```
 
-## Testing without CUDA
+### Native core without CUDA/GUI
 
-Unit tests must not import torch, cupy, numba, or pynvml. Keep optional imports inside constructors or runtime functions. Pure controllers and argument-rewriting helpers must remain independently testable.
+```bash
+cmake -S native-juce -B build/juce-core \
+  -DGPU_STRESS_ENABLE_CUDA=OFF \
+  -DGPU_STRESS_BUILD_GUI=OFF \
+  -DGPU_STRESS_BUILD_TESTS=ON
+cmake --build build/juce-core
+ctest --test-dir build/juce-core --output-on-failure
+```
 
-Release runners can build packages and validate `--help` without a GPU. Actual CUDA GEMM execution remains a hardware smoke-test requirement.
+### Physical GPU smoke test
+
+CI cannot replace a target-machine test. On the intended NVIDIA system, validate discovery and low-load behavior before a long run. Monitor cooling and physical telemetry externally.
+
+## Engineering rules
+
+- Keep CUDA imports lazy in Python modules used by CPU-only CI.
+- Never perform stress work on Flutter's UI isolate.
+- Keep the Flutter/native boundary explicit and replaceable.
+- Do not call requested load “measured utilization.”
+- Do not add recurring monitoring or file writes to the silent JUCE worker without changing its documented contract.
+- Preserve a manual stop path for every background workload.
+- Add a regression test for every lifecycle, rollback, parser, or packaging bug.
+- Version-specific release prose belongs in `docs/releases/`, not inline heredocs duplicated across workflows.
 
 ## Known limitations
 
 - NVML utilization is device-wide and includes unrelated GPU work.
-- Target utilization is not a board-power target.
-- WDDM, power caps, cooling, and throttling can change behavior.
-- The portable and AppImage builds are x86-64 and CuPy-only.
-- PyInstaller Linux output can still encounter host glibc compatibility differences.
-- AppImage may require `APPIMAGE_EXTRACT_AND_RUN=1` on systems without functional FUSE integration.
-- Docker layers use Docker's data root after import.
-- The Windows launcher tracks one PID file; forcibly terminating the worker can leave a stale file, which is ignored after the PID is no longer active.
-- This is a load/stress tool, not a dedicated GPU memory error detector.
+- A utilization target is not a board-power target.
+- WDDM, clocks, power caps, cooling, and throttling change observed behavior.
+- Flutter v0.1 does not expose physical telemetry or persistent history.
+- Portable Linux binaries can encounter host glibc compatibility differences.
+- AppImage may need extract-and-run mode where FUSE is unavailable.
+- Existing GHCR images and release artifacts keep legacy names until users migrate.
+- This repository creates load; it is not a dedicated CPU/GPU memory error detector or hardware certification suite.

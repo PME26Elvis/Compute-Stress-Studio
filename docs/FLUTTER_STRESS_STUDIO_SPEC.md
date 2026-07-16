@@ -1,210 +1,204 @@
-# Flutter Stress Studio — Product and Engineering Specification
+# Stress Studio — product and engineering specification
 
-Status: implementation baseline for `agent/flutter-unified-stress-studio`  
-Target SDK: Flutter 3.44.0 stable  
-Initial desktop targets: Windows x64 and Linux x64
+**Repository product:** Compute Stress Studio  
+**Application:** Stress Studio (`apps/stress_studio`)  
+**Status:** v0.1 implementation merged and lifecycle-hardened  
+**Current preview:** `stress-studio-v0.1.14`  
+**Pinned SDK:** Flutter 3.44.0 stable  
+**Desktop targets:** Windows x64 and Linux x64
 
 ## 1. Product intent
 
-Stress Studio is a one-stop desktop application for configuring, starting, stopping, and understanding coordinated CPU and NVIDIA GPU stress sessions. It is a new product surface, not a pixel-for-pixel migration of the existing PyQt or JUCE applications.
+Stress Studio is a one-stop desktop application for configuring, starting, stopping, and understanding coordinated CPU and NVIDIA GPU stress sessions. It is a purpose-built Flutter product surface, not a pixel-for-pixel migration of the original PyQt or JUCE windows.
 
-The application should feel like a modern workstation control plane: clear hierarchy, strong defaults, low cognitive load, responsive layouts, explicit lifecycle states, and safe recovery when one backend fails.
+The application should feel like a workstation control plane: clear hierarchy, strong defaults, low cognitive load, responsive layouts, explicit lifecycle states, and safe recovery when one backend fails.
 
 ## 2. Product principles
 
-1. **Flutter is the control plane, not the hot loop.** Rendering, navigation, state composition, validation, accessibility, and operator workflow belong in Flutter. Long-running GPU compute belongs behind a process boundary; CPU compute belongs in killable isolates.
-2. **Progressive capability.** CPU-only operation must work everywhere Flutter desktop works. NVIDIA GPU controls activate when the bundled worker exists and starts successfully.
-3. **No hidden monitoring side effects.** The app does not spawn `nvidia-smi`, does not write periodic telemetry, and does not create run logs by default. Physical telemetry remains the job of the user's external monitor.
-4. **Failure isolation.** A GPU startup failure must stop any CPU workload started in the same transaction. Closing or stopping the UI must terminate child workloads.
-5. **Deterministic packaging.** GitHub Actions pins Flutter 3.44.0, builds the JUCE worker, builds Flutter release bundles, injects the worker, emits checksums, and publishes immutable assets.
-6. **Modern desktop UX.** Material 3, adaptive NavigationRail/NavigationBar layouts, keyboard shortcuts, animated state transitions, large-screen composition, and accessible status semantics are first-class requirements.
+1. **Flutter is the control plane, not the hot loop.** Rendering, navigation, validation, accessibility, presets, and operator workflow belong in Flutter. Long-running GPU compute stays behind a process boundary; CPU compute stays in killable isolates.
+2. **Progressive capability.** CPU-only operation remains possible when the bundled NVIDIA worker is unavailable. GPU startup errors must be visible and actionable.
+3. **No hidden monitoring side effects.** The app does not repeatedly spawn `nvidia-smi`, write periodic telemetry, or present target values as measured utilization.
+4. **Failure isolation.** A GPU startup failure stops CPU work started in the same transaction. Manual stop, timeout completion, controller disposal, and normal application shutdown terminate child workloads.
+5. **Deterministic packaging.** GitHub Actions pins Flutter and CUDA versions, builds the JUCE worker, builds Flutter bundles, injects the worker, verifies the final layout, emits checksums, and publishes explicit releases.
+6. **Modern desktop UX.** Material 3, adaptive navigation, keyboard shortcuts, animated transitions, large-screen composition, narrow-window usability, and accessible status semantics are first-class requirements.
 
-## 3. Scope
-
-### 3.1 Included in v0.1
+## 3. Implemented v0.1 scope
 
 - Windows x64 and Linux x64 Flutter desktop applications.
 - CPU stress using one Dart isolate per selected logical worker.
-- NVIDIA GPU stress using the silent JUCE WaveMix background executable.
-- Concurrent CPU+GPU sessions with a single duration and coordinated stop.
+- NVIDIA GPU stress using the silent JUCE CUDA WaveMix executable.
+- Concurrent CPU+GPU sessions with one duration and coordinated stop.
 - CPU target load, isolate count, GPU duty target, VRAM budget, and device index.
 - Presets: quick check, balanced, CPU validation, GPU validation, and 96-hour endurance.
 - Dashboard, presets, diagnostics, and settings destinations.
 - Material 3 light, dark, and system theme modes.
-- Responsive desktop/mobile-width navigation.
-- Ctrl+Enter start and Escape stop shortcuts.
-- Unit tests, controller tests, widget tests, static analysis, and release builds.
+- NavigationRail, expanded NavigationRail, and NavigationBar layouts.
+- **Ctrl+Enter** start and **Escape** stop shortcuts.
+- Transactional start/rollback and idempotent stop.
+- Bounded in-memory session history.
+- Production root ownership that disposes the controller and stops workers when the app closes.
+- Strict analysis, unit tests, controller tests, widget tests, native tests, and Windows/Linux bundle builds.
 
-### 3.2 Explicitly deferred
+## 4. Explicitly deferred
 
-- In-app GPU temperature/power/utilization polling.
+- In-app GPU temperature, power, fan, clock, and measured-utilization polling.
 - macOS GPU stress support.
-- System tray integration for the Flutter shell.
-- Persistent run database and CSV export.
-- Signed installers, MSIX, Snap, Flatpak, and auto-update.
-- Native CPU affinity, priority, NUMA placement, or AVX-specific kernels.
+- Flutter system-tray integration.
+- Persistent profiles, run database, and CSV export from the Flutter shell.
+- Signed installers, MSIX, Flatpak, Snap, and auto-update.
+- Native CPU affinity, priority, NUMA placement, and architecture-specific kernels.
 - A federated native Flutter plugin replacing the executable worker boundary.
+- Independent CPU/GPU timelines and phased/ramp workloads inside the Flutter app.
 
-## 4. Information architecture
+## 5. Information architecture
 
 ### Dashboard
 
 The default workspace combines:
 
-- a prominent session state and start/stop control;
+- session state and primary start/stop actions;
 - elapsed, remaining, CPU target, and GPU target cards;
-- a workload composer with independent CPU/GPU enable switches;
-- target sliders, worker count, VRAM budget, and duration chips;
+- independent CPU/GPU switches;
+- target sliders, isolate count, VRAM budget, device index, and duration controls;
 - command gauges showing requested—not measured—load;
-- worker readiness and current preset context.
+- worker readiness, current preset, inline validation, and runtime errors.
 
 ### Presets
 
-Preset cards explain intent before applying values. Applying a preset returns to the dashboard where every value remains editable.
+Preset cards explain purpose before applying values. Applying a preset returns to the dashboard, where all values remain editable until a session starts.
 
 ### Diagnostics
 
-Diagnostics show OS, logical processor count, bundled GPU worker path, worker availability, and the external-monitoring policy. Capability inspection must not start a stress workload.
+Diagnostics show OS, logical processor count, bundled worker path, worker availability, and the external-monitoring policy. Capability inspection does not start load.
 
 ### Settings
 
-Settings contain theme and interaction preferences. Workload settings remain on the dashboard to avoid splitting one configuration across multiple pages.
+Settings contain theme and interaction preferences. Workload configuration remains on the dashboard so one run is not split across multiple pages.
 
-## 5. Runtime architecture
+## 6. Runtime architecture
 
 ```text
-Flutter Material 3 UI
+OwnedStressStudioApp (lifecycle owner)
         |
-StudioController (transaction + state machine)
+StressStudioApp / Material 3 UI
         |
-RunConfiguration / validation / presets
+StudioController (state machine + transaction coordinator)
         |
-+------------------------+-----------------------------+
-| CPU adapter            | GPU adapter                 |
-| Dart isolate pool      | silent JUCE Background exe |
-| 50 ms duty windows     | CUDA WaveMix scheduler     |
-+------------------------+-----------------------------+
+RunConfiguration / validation / presets / history
+        |
++---------------------------+------------------------------+
+| CPU adapter               | GPU adapter                  |
+| Dart isolate pool         | silent JUCE background exe   |
+| 50 ms duty windows        | CUDA WaveMix scheduler       |
++---------------------------+------------------------------+
 ```
 
-### 5.1 Flutter layer
+### Flutter layer
 
 - `RunConfiguration` is immutable and validated before execution.
 - `StudioController` is the single orchestration state owner.
-- Services are injected behind interfaces so tests never create real load.
-- UI widgets observe `ChangeNotifier` through `ListenableBuilder`.
-- The initial implementation deliberately avoids third-party runtime packages to reduce desktop plugin and supply-chain surface.
+- services are injected behind interfaces so tests never create real load;
+- widgets observe state through `ChangeNotifier` and `ListenableBuilder`;
+- the implementation avoids unnecessary runtime packages to reduce desktop plugin and supply-chain surface;
+- `OwnedStressStudioApp` owns controller disposal in production, while the presentational app remains independently testable.
 
-### 5.2 CPU adapter
+### CPU adapter
 
-The CPU adapter creates one isolate per configured worker. Each isolate runs a 50 ms duty window: busy floating-point work for the active portion and sleep for the remainder. Isolates are immediately killable, preventing a busy UI event loop and bounding stop latency.
+The CPU adapter creates one isolate per configured worker. Each isolate runs a 50 ms duty window: floating-point busy work for the active portion and sleep for the remainder. Isolates are immediately killable, keeping compute away from the UI isolate and bounding stop latency.
 
-The percentage is a commanded duty target, not a guarantee of OS-reported total CPU utilization. Scheduler placement, logical/physical core topology, power policy, and competing processes influence measured utilization.
+The percentage is a commanded duty target, not a guarantee of OS-reported total CPU utilization. Scheduler placement, SMT topology, power policy, and competing processes affect measured results.
 
-### 5.3 GPU adapter
+### GPU adapter
 
-The GPU adapter locates the existing silent JUCE worker beside the Flutter executable. It passes duration, load, VRAM budget, and device index through the established CLI contract. The worker is already a GUI-subsystem/no-window executable on Windows, avoiding recurring console flashes.
+The GPU adapter locates `GPU-Stress-JUCE-Background.exe` on Windows or `GPU-Stress-JUCE-Background` on Linux beside the Flutter executable. It passes duration, load, VRAM budget, and device index through the established CLI contract.
 
-The Flutter app treats early worker exit as startup failure and rolls back CPU load. Stop sends a graceful termination signal and escalates to a forced kill after a short timeout.
+Early worker exit is startup failure and rolls back CPU load. Stop requests graceful termination and escalates to forced termination after a short timeout. Controller disposal begins the same cleanup path during normal app shutdown.
 
-### 5.4 State machine
+### State machine
 
 ```text
 idle -> starting -> running -> stopping -> idle
-                    |             |
-                    +-----------> completed
+                     |             |
+                     +-----------> completed
 starting/running ----------------> error
 ```
 
-Configuration is immutable while active. Start is transactional across CPU and GPU adapters. Stop is idempotent.
+Configuration is locked while active. Start is transactional across enabled adapters. Stop is idempotent.
 
-## 6. UX and visual system
+## 7. UX and accessibility
 
-- Material 3 color schemes generated from a violet primary seed with a mint status accent.
-- 24–30 px radii on large workstation surfaces.
-- High-information cards with restrained borders rather than heavy elevation.
-- Gradient hero panel for the primary action, not decorative full-screen gradients.
-- NavigationRail at desktop widths, expanded rail on large displays, NavigationBar on narrow windows.
-- Custom painted radial gauges avoid chart-package dependency.
-- Explicit copy distinguishes target load from physical telemetry.
-- Error messages remain inline and actionable.
+- Material 3 color schemes with high-information cards and restrained elevation.
+- Gradient treatment is limited to the primary hero surface.
+- Navigation adapts by window width rather than assuming one desktop size.
+- Standard Material controls preserve keyboard and semantic behavior.
+- State is communicated with text and iconography, not color alone.
+- Controls disable while active instead of silently accepting changes.
+- Copy explicitly distinguishes target values from physical telemetry.
+- Errors remain inline and actionable.
 
-## 7. Accessibility and interaction
-
-- All actions use standard Material controls and semantics.
-- Keyboard-only start/stop is supported.
-- Layout remains usable at narrow window widths.
-- State is communicated through text plus icon/color, never color alone.
-- Controls disable while a run is active rather than silently accepting changes.
-
-## 8. Packaging
+## 8. Packaging contract
 
 ### Windows
 
-1. Generate Windows platform scaffolding with Flutter 3.44.0.
-2. Build the native JUCE CUDA worker with CUDA 12.6.3 and `sm_61` support.
-3. Build `flutter build windows --release`.
+1. Generate Windows scaffolding with Flutter 3.44.0.
+2. Build the JUCE CUDA worker with CUDA 12.6.3 and `sm_61` support.
+3. Run `flutter build windows --release`.
 4. Copy `GPU-Stress-JUCE-Background.exe` beside `stress_studio.exe`.
-5. Add this specification, source commit, and third-party notices.
-6. Zip the complete runner directory.
+5. Add specification, source commit, JUCE guide, and third-party notices.
+6. Verify both executables and archive the complete runner directory.
 
 ### Linux
 
 1. Install GTK and Flutter desktop dependencies.
-2. Generate Linux platform scaffolding.
-3. Build the JUCE CUDA worker.
-4. Build `flutter build linux --release`.
-5. Copy `GPU-Stress-JUCE-Background` beside the Flutter executable.
-6. Emit a compressed tar archive.
+2. Generate Linux scaffolding.
+3. Build and test the JUCE CUDA worker.
+4. Run `flutter build linux --release`.
+5. Copy `GPU-Stress-JUCE-Background` beside `stress_studio`.
+6. Verify both executables and emit a compressed tar archive.
 
-The executable must not be separated from its adjacent Flutter libraries/data or GPU worker.
+The executable must not be separated from adjacent Flutter libraries, data, or the GPU worker.
 
-## 9. Test strategy
+## 9. Validation strategy
 
-### Unit
+### Pure and controller tests
 
-- configuration validation;
-- preset values;
-- empty workload rejection;
-- service rollback on GPU failure.
-
-### Controller
-
+- configuration defaults and validation;
+- preset values and empty-workload rejection;
 - coordinated start/stop;
-- state transitions;
-- bounded history;
-- completion timer behavior;
-- no mutation while active.
+- GPU failure rollback;
+- lifecycle state transitions and bounded history.
 
-### Widget
+### Widget and lifecycle tests
 
-- dashboard composition;
-- CPU and GPU controls are discoverable;
-- responsive navigation modes;
-- keyboard actions;
-- inline error rendering.
+- dashboard and workload-control discoverability;
+- responsive app composition;
+- production owner disposal;
+- active fake CPU and GPU services stop when the app root is removed.
 
 ### CI and packaging
 
-- `dart format --set-exit-if-changed`;
-- `flutter analyze` with strict casts/inference/raw types;
-- `flutter test`;
-- Windows and Linux release build;
-- native JUCE tests;
-- worker presence in final bundles;
-- archive size and checksum validation.
+- canonical Dart formatting;
+- strict Flutter analysis;
+- Flutter tests with coverage;
+- Windows and Linux Flutter release builds;
+- native JUCE/CUDA builds and tests;
+- worker presence in both bundles;
+- archive creation and SHA256 checksums.
 
-Physical CUDA execution cannot be validated by GitHub-hosted runners and still requires a short real-machine smoke test.
+GitHub-hosted runners cannot execute the real CUDA workload on the target GPU. Sustained utilization, cooling, temperature, fan, clocks, power, and machine stability require a physical smoke test.
 
-## 10. Branch and merge policy
+## 10. Release policy
 
-Development occurs on `agent/flutter-unified-stress-studio`. The branch stays separate while the specification, Flutter quality job, Windows package, and Linux package are under review. After all required checks pass, merge to `main` using a normal merge commit and retain the branch, matching the repository's established preference.
+Pull requests and relevant pushes validate source and assemble artifacts. GitHub Releases are published only by an explicit workflow dispatch with a chosen tag, title, notes file, and prerelease flag. Version-specific notes live under `docs/releases/`; note-only corrections use the release-maintenance workflow.
 
-## 11. Roadmap after v0.1
+See [RELEASES.md](RELEASES.md) for artifact names and compatibility policy.
 
-1. Add a federated `stress_runtime` Flutter plugin with Windows/Linux native implementations.
-2. Add optional NVML telemetry through dynamic library loading, never through recurring `nvidia-smi` child processes.
-3. Add Flutter system tray and window lifecycle integration.
-4. Add persistent profiles and session history.
-5. Add signed MSIX and Linux package formats.
-6. Add macOS CPU-only support and a capability-specific GPU message.
-7. Add workload phases, ramps, and independent CPU/GPU timelines.
+## 11. Roadmap
+
+1. Add optional NVML telemetry through dynamic library loading without recurring `nvidia-smi` child processes.
+2. Add persistent profiles and session history.
+3. Add phased workloads, ramps, and independent CPU/GPU timelines.
+4. Add native system-tray and window-close confirmation for active sessions.
+5. Add signed Windows packaging and additional Linux package formats.
+6. Evaluate a federated native runtime plugin once the executable contract is proven stable.
+7. Add macOS CPU-only support with capability-aware GPU messaging.
