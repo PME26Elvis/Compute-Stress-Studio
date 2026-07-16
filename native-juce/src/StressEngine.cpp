@@ -10,6 +10,10 @@
 namespace gpu_stress_backup {
 
 StressEngine::StressEngine(std::unique_ptr<IStressBackend> backend,
+                           std::unique_ptr<ITelemetryProvider> telemetry)
+    : StressEngine(std::move(backend), std::move(telemetry), nullptr) {}
+
+StressEngine::StressEngine(std::unique_ptr<IStressBackend> backend,
                            std::unique_ptr<ITelemetryProvider> telemetry,
                            std::unique_ptr<RunLogger> logger)
     : backend_(std::move(backend)), telemetry_(std::move(telemetry)), logger_(std::move(logger)) {}
