@@ -2,9 +2,7 @@
 
 #include "GpuStressBackup/StressBackend.h"
 #include "GpuStressBackup/StressEngine.h"
-#include "GpuStressBackup/Telemetry.h"
 
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -25,19 +23,17 @@ public:
     BackendInfo info() const override { return {}; }
 };
 
-class HotThenCoolTelemetry final : public ITelemetryProvider {
+class RuntimeFailingBackend final : public IStressBackend {
 public:
-    TelemetrySample sample(int) override {
-        TelemetrySample result;
-        result.available = true;
-        result.deviceName = "Thermal test GPU";
-        result.temperatureC = calls_++ == 0 ? 90.0 : 70.0;
-        result.utilizationPercent = 87.0;
-        return result;
+    bool initialize(const AppConfig&, std::string&) override { return true; }
+    double runActiveFor(double, std::string& error) override {
+        error = "intentional runtime failure";
+        return 0.0;
     }
+    void shutdown() noexcept override { shutdownCalled = true; }
+    BackendInfo info() const override { return {}; }
 
-private:
-    int calls_ = 0;
+    bool shutdownCalled = false;
 };
 
 }  // namespace
@@ -49,7 +45,7 @@ GPU_TEST_CASE("synthetic engine completes a timed run") {
     config.dutyWindowMs = 50;
     config.dryRun = true;
 
-    StressEngine engine(makeSyntheticStressBackend(), makeSyntheticTelemetry());
+    StressEngine engine(makeSyntheticStressBackend());
     std::string error;
     GPU_REQUIRE(engine.start(config, error));
     engine.wait();
@@ -58,6 +54,7 @@ GPU_TEST_CASE("synthetic engine completes a timed run") {
     GPU_REQUIRE(snapshot.state == EngineState::Completed);
     GPU_REQUIRE(snapshot.completedWindows >= 10);
     GPU_REQUIRE(snapshot.elapsedSeconds >= 0.9);
+    GPU_REQUIRE(snapshot.remainingSeconds == 0.0);
 }
 
 GPU_TEST_CASE("stop request ends a long synthetic run early") {
@@ -67,7 +64,7 @@ GPU_TEST_CASE("stop request ends a long synthetic run early") {
     config.dutyWindowMs = 50;
     config.dryRun = true;
 
-    StressEngine engine(makeSyntheticStressBackend(), makeSyntheticTelemetry());
+    StressEngine engine(makeSyntheticStressBackend());
     std::string error;
     GPU_REQUIRE(engine.start(config, error));
     std::this_thread::sleep_for(std::chrono::milliseconds(180));
@@ -77,12 +74,13 @@ GPU_TEST_CASE("stop request ends a long synthetic run early") {
     const auto snapshot = engine.snapshot();
     GPU_REQUIRE(snapshot.state == EngineState::Completed);
     GPU_REQUIRE(snapshot.elapsedSeconds < 3.0);
+    GPU_REQUIRE(snapshot.remainingSeconds > 0.0);
 }
 
 GPU_TEST_CASE("backend initialization failure becomes engine error") {
     AppConfig config;
     config.durationSeconds = 1;
-    StressEngine engine(std::make_unique<FailingBackend>(), makeSyntheticTelemetry());
+    StressEngine engine(std::make_unique<FailingBackend>());
     std::string error;
     GPU_REQUIRE(engine.start(config, error));
     engine.wait();
@@ -92,27 +90,34 @@ GPU_TEST_CASE("backend initialization failure becomes engine error") {
     GPU_REQUIRE(snapshot.error.find("intentional") != std::string::npos);
 }
 
-GPU_TEST_CASE("thermal guard pauses then resumes after hysteresis") {
+GPU_TEST_CASE("backend runtime failure becomes engine error") {
     AppConfig config;
-    config.durationSeconds = 2;
-    config.loadPercent = 50.0;
+    config.durationSeconds = 1;
     config.dutyWindowMs = 50;
-    config.temperatureLimitC = 80;
-    config.dryRun = true;
-
-    StressEngine engine(makeSyntheticStressBackend(), std::make_unique<HotThenCoolTelemetry>());
+    auto backend = std::make_unique<RuntimeFailingBackend>();
+    StressEngine engine(std::move(backend));
     std::string error;
     GPU_REQUIRE(engine.start(config, error));
-
-    bool sawThermalPause = false;
-    while (engine.isRunning()) {
-        if (engine.snapshot().state == EngineState::ThermalPause) {
-            sawThermalPause = true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
     engine.wait();
 
-    GPU_REQUIRE(sawThermalPause);
-    GPU_REQUIRE(engine.snapshot().state == EngineState::Completed);
+    const auto snapshot = engine.snapshot();
+    GPU_REQUIRE(snapshot.state == EngineState::Error);
+    GPU_REQUIRE(snapshot.error.find("runtime") != std::string::npos);
+}
+
+GPU_TEST_CASE("engine rejects a second concurrent start") {
+    AppConfig config;
+    config.durationSeconds = 2;
+    config.loadPercent = 10.0;
+    config.dutyWindowMs = 50;
+    config.dryRun = true;
+
+    StressEngine engine(makeSyntheticStressBackend());
+    std::string firstError;
+    GPU_REQUIRE(engine.start(config, firstError));
+    std::string secondError;
+    GPU_REQUIRE(!engine.start(config, secondError));
+    GPU_REQUIRE(secondError.find("already") != std::string::npos);
+    engine.requestStop();
+    engine.wait();
 }

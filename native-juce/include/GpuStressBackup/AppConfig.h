@@ -1,6 +1,5 @@
 #pragma once
 
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -11,7 +10,6 @@ struct AppConfig {
     double loadPercent = GPU_STRESS_DEFAULT_LOAD_PERCENT;
     int memoryMiB = 192;
     int deviceIndex = 0;
-    int temperatureLimitC = 85;
     int dutyWindowMs = 200;
     int targetKernelMs = 8;
     bool background = false;
@@ -19,8 +17,6 @@ struct AppConfig {
     bool selfTest = false;
     bool showHelp = false;
     bool guiSmoke = false;
-    bool telemetryEnabled = true;
-    std::filesystem::path outputDirectory;
 
     [[nodiscard]] bool validate(std::string& error) const;
 };

@@ -1,9 +1,7 @@
 #include "GpuStressBackup/StressBackend.h"
-#include "GpuStressBackup/Telemetry.h"
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <thread>
 
 namespace gpu_stress_backup {
@@ -46,33 +44,10 @@ private:
     BackendInfo info_;
 };
 
-class SyntheticTelemetry final : public ITelemetryProvider {
-public:
-    TelemetrySample sample(int) override {
-        phase_ += 0.17;
-        TelemetrySample sample;
-        sample.available = true;
-        sample.deviceName = "Synthetic NVIDIA GPU";
-        sample.utilizationPercent = 87.0 + std::sin(phase_) * 2.0;
-        sample.temperatureC = 66.0 + std::sin(phase_ * 0.3) * 3.0;
-        sample.powerWatts = 61.0 + std::sin(phase_ * 0.7) * 4.0;
-        sample.memoryUsedMiB = 192.0;
-        sample.memoryTotalMiB = 5120.0;
-        return sample;
-    }
-
-private:
-    double phase_ = 0.0;
-};
-
 }  // namespace
 
 std::unique_ptr<IStressBackend> makeSyntheticStressBackend() {
     return std::make_unique<SyntheticStressBackend>();
-}
-
-std::unique_ptr<ITelemetryProvider> makeSyntheticTelemetry() {
-    return std::make_unique<SyntheticTelemetry>();
 }
 
 #if !GPU_STRESS_HAS_CUDA

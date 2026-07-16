@@ -21,8 +21,6 @@ public:
 private:
     void timerCallback() override;
     [[nodiscard]] std::unique_ptr<IStressBackend> createBackend() const;
-    [[nodiscard]] std::filesystem::path defaultOutputDirectory() const;
-    void writeStartupFailure(const std::string& message) const;
 
     AppConfig config_;
     juce::InterProcessLock processLock_{"GPUStressJUCEBackupBackground"};

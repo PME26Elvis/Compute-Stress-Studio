@@ -15,7 +15,7 @@ public:
     }
 
     const juce::String getApplicationVersion() override {
-        return "1.0.0";
+        return "1.1.0";
     }
 
     bool moreThanOneInstanceAllowed() override {
@@ -43,6 +43,7 @@ public:
             backgroundRunner_ = std::make_unique<BackgroundRunner>(parsed.config);
             std::string error;
             if (!backgroundRunner_->start(error)) {
+                setApplicationReturnValue(2);
                 juce::Timer::callAfterDelay(50, [] { juce::JUCEApplicationBase::quit(); });
             }
             return;
@@ -50,11 +51,14 @@ public:
 
         mainWindow_ = std::make_unique<MainWindow>();
         if (parsed.config.guiSmoke) {
-            juce::Timer::callAfterDelay(500, [] { juce::JUCEApplicationBase::quit(); });
+            runGuiSmokeSequence();
         }
     }
 
     void shutdown() override {
+        if (mainWindow_ != nullptr) {
+            mainWindow_->stopStress();
+        }
         if (backgroundRunner_ != nullptr) {
             backgroundRunner_->stop();
         }
@@ -63,12 +67,51 @@ public:
     }
 
     void systemRequestedQuit() override {
+        if (mainWindow_ != nullptr) {
+            mainWindow_->stopStress();
+        }
         quit();
     }
 
-    void anotherInstanceStarted(const juce::String&) override {}
+    void anotherInstanceStarted(const juce::String&) override {
+        if (mainWindow_ != nullptr) {
+            mainWindow_->showFromTray();
+        }
+    }
 
 private:
+    void runGuiSmokeSequence() {
+        juce::Timer::callAfterDelay(100, [this] {
+            if (mainWindow_ == nullptr || !mainWindow_->hasTrayIcon()) {
+                failGuiSmoke();
+                return;
+            }
+            mainWindow_->hideToTray();
+        });
+
+        juce::Timer::callAfterDelay(250, [this] {
+            if (mainWindow_ == nullptr || mainWindow_->isVisible()) {
+                failGuiSmoke();
+                return;
+            }
+            mainWindow_->showFromTray();
+        });
+
+        juce::Timer::callAfterDelay(450, [this] {
+            if (mainWindow_ == nullptr || !mainWindow_->isVisible() ||
+                !mainWindow_->hasTrayIcon()) {
+                failGuiSmoke();
+                return;
+            }
+            quit();
+        });
+    }
+
+    void failGuiSmoke() {
+        setApplicationReturnValue(3);
+        quit();
+    }
+
     void showThenQuit(const juce::String& title, const juce::String& message) {
         juce::AlertWindow::showMessageBoxAsync(
             juce::MessageBoxIconType::InfoIcon,
