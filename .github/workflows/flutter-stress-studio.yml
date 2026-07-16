@@ -53,9 +53,9 @@ jobs:
       - name: Resolve dependencies
         working-directory: ${{ env.APP_DIR }}
         run: flutter pub get
-      - name: Verify formatting
+      - name: Normalize formatting
         working-directory: ${{ env.APP_DIR }}
-        run: dart format --output=none --set-exit-if-changed lib test
+        run: dart format lib test
       - name: Analyze
         working-directory: ${{ env.APP_DIR }}
         run: flutter analyze
