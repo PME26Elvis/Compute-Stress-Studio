@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cctype>
 #include <sstream>
+#include <type_traits>
 
 namespace gpu_stress_backup {
 namespace {
@@ -146,7 +147,9 @@ ParseResult parseArguments(const std::vector<std::string>& arguments) {
             result.config.outputDirectory = value;
         } else {
             result.ok = false;
-            result.error = "unknown argument: " + argument;
+            if (result.error.empty()) {
+                result.error = "unknown argument: " + argument;
+            }
             return result;
         }
     }
