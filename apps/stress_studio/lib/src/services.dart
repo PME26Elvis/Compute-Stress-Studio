@@ -19,25 +19,27 @@ abstract interface class GpuStressService {
   Future<void> stop();
 }
 
-List<String> buildCpuWorkerArguments(RunConfiguration configuration) => <String>[
-  '--duration',
-  configuration.duration.inSeconds.toString(),
-  '--load',
-  configuration.cpuLoadPercent.toStringAsFixed(2),
-  '--threads',
-  configuration.cpuThreads.toString(),
-];
+List<String> buildCpuWorkerArguments(RunConfiguration configuration) =>
+    <String>[
+      '--duration',
+      configuration.duration.inSeconds.toString(),
+      '--load',
+      configuration.cpuLoadPercent.toStringAsFixed(2),
+      '--threads',
+      configuration.cpuThreads.toString(),
+    ];
 
-List<String> buildGpuWorkerArguments(RunConfiguration configuration) => <String>[
-  '--duration',
-  configuration.duration.inSeconds.toString(),
-  '--load',
-  configuration.gpuLoadPercent.round().toString(),
-  '--memory-mib',
-  configuration.gpuMemoryMiB.toString(),
-  '--device',
-  configuration.gpuDeviceIndex.toString(),
-];
+List<String> buildGpuWorkerArguments(RunConfiguration configuration) =>
+    <String>[
+      '--duration',
+      configuration.duration.inSeconds.toString(),
+      '--load',
+      configuration.gpuLoadPercent.round().toString(),
+      '--memory-mib',
+      configuration.gpuMemoryMiB.toString(),
+      '--device',
+      configuration.gpuDeviceIndex.toString(),
+    ];
 
 abstract base class _ManagedWorkerProcess {
   Process? _process;

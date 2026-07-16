@@ -326,20 +326,25 @@ final class _StatusGrid extends StatelessWidget {
             icon: Icons.timer_outlined,
             label: 'Elapsed',
             value: _formatDuration(controller.elapsed),
-            detail: '${(controller.progress * 100).toStringAsFixed(1)}% of session',
+            detail:
+                '${(controller.progress * 100).toStringAsFixed(1)}% of session',
           ),
           _MetricCard(
             width: width,
             icon: Icons.memory_rounded,
             label: 'CPU target',
-            value: config.cpuEnabled ? '${config.cpuLoadPercent.round()}%' : 'Off',
+            value: config.cpuEnabled
+                ? '${config.cpuLoadPercent.round()}%'
+                : 'Off',
             detail: '${config.cpuThreads} low-priority threads',
           ),
           _MetricCard(
             width: width,
             icon: Icons.developer_board_rounded,
             label: 'GPU target',
-            value: config.gpuEnabled ? '${config.gpuLoadPercent.round()}%' : 'Off',
+            value: config.gpuEnabled
+                ? '${config.gpuLoadPercent.round()}%'
+                : 'Off',
             detail: '${config.gpuMemoryMiB} MiB WaveMix budget',
           ),
           _MetricCard(
@@ -372,9 +377,9 @@ final class WorkloadComposer extends StatelessWidget {
           children: <Widget>[
             Text(
               'Workload composer',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
             Text(
@@ -482,9 +487,9 @@ final class WorkloadComposer extends StatelessWidget {
             const Divider(height: 40),
             Text(
               'Session duration',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 12),
             Wrap(
@@ -557,9 +562,9 @@ final class ActivityPanel extends StatelessWidget {
         children: <Widget>[
           Text(
             'Session control',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 18),
           _WorkerReadiness(
@@ -582,27 +587,29 @@ final class ActivityPanel extends StatelessWidget {
           const SizedBox(height: 24),
           Text(
             'Recent sessions',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 10),
           if (controller.history.isEmpty)
             const Text('No completed or stopped sessions in this app session.')
           else
-            ...controller.history.take(5).map(
-              (record) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                leading: Icon(
-                  record.completed
-                      ? Icons.check_circle_outline_rounded
-                      : Icons.stop_circle_outlined,
+            ...controller.history
+                .take(5)
+                .map(
+                  (record) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: Icon(
+                      record.completed
+                          ? Icons.check_circle_outline_rounded
+                          : Icons.stop_circle_outlined,
+                    ),
+                    title: Text(record.configuration.presetName),
+                    subtitle: Text(_formatDuration(record.elapsed)),
+                  ),
                 ),
-                title: Text(record.configuration.presetName),
-                subtitle: Text(_formatDuration(record.elapsed)),
-              ),
-            ),
         ],
       ),
     ),
@@ -620,9 +627,7 @@ final class _WorkerReadiness extends StatelessWidget {
     children: <Widget>[
       Icon(
         ready ? Icons.check_circle_rounded : Icons.error_outline_rounded,
-        color: ready
-            ? StudioTheme.accent
-            : Theme.of(context).colorScheme.error,
+        color: ready ? StudioTheme.accent : Theme.of(context).colorScheme.error,
       ),
       const SizedBox(width: 10),
       Expanded(child: Text(label)),
@@ -863,9 +868,9 @@ final class _PageFrame extends StatelessWidget {
           children: <Widget>[
             Text(
               title,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
             Text(subtitle, style: Theme.of(context).textTheme.bodyLarge),
