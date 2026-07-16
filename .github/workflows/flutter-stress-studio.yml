@@ -220,6 +220,7 @@ jobs:
       - name: Assemble Windows bundle
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $source = Join-Path $PWD "apps\stress_studio\build\windows\x64\runner\Release"
           $bundle = Join-Path $PWD "dist\Compute-Stress-Studio-Windows-x64"
           New-Item -ItemType Directory -Force -Path $bundle | Out-Null
@@ -227,25 +228,36 @@ jobs:
 
           $cpuWorker = Get-ChildItem build\flutter-cpu-windows -Recurse -Filter "Compute-Stress-CPU-Worker.exe" | Select-Object -First 1
           if (-not $cpuWorker) { throw "CPU worker was not found" }
-          Copy-Item $cpuWorker.FullName (Join-Path $bundle "Compute-Stress-CPU-Worker.exe")
+          $cpuDestination = Join-Path $bundle "Compute-Stress-CPU-Worker.exe"
+          Copy-Item $cpuWorker.FullName $cpuDestination -Force
 
           $gpuWorker = Get-ChildItem build\flutter-juce-windows -Recurse -Filter "GPU-Stress-JUCE.exe" | Select-Object -First 1
           if (-not $gpuWorker) { throw "JUCE GPU worker was not found" }
-          Copy-Item $gpuWorker.FullName (Join-Path $bundle "GPU-Stress-JUCE-Background.exe")
+          $gpuDestination = Join-Path $bundle "GPU-Stress-JUCE-Background.exe"
+          Copy-Item $gpuWorker.FullName $gpuDestination -Force
 
-          Copy-Item README.md $bundle
-          Copy-Item docs\FLUTTER_STRESS_STUDIO_SPEC.md $bundle
-          Copy-Item docs\RELEASES.md $bundle
-          Copy-Item docs\JUCE_WAVEMIX_BACKUP_GUIDE.md $bundle
-          Copy-Item native-juce\THIRD_PARTY_NOTICES.md $bundle
+          Copy-Item README.md $bundle -Force
+          Copy-Item docs\FLUTTER_STRESS_STUDIO_SPEC.md $bundle -Force
+          Copy-Item docs\RELEASES.md $bundle -Force
+          Copy-Item docs\JUCE_WAVEMIX_BACKUP_GUIDE.md $bundle -Force
+          Copy-Item native-juce\THIRD_PARTY_NOTICES.md $bundle -Force
           Set-Content -Path (Join-Path $bundle "SOURCE-COMMIT.txt") -Value $env:GITHUB_SHA
 
-          & (Join-Path $bundle "Compute-Stress-CPU-Worker.exe") --self-test
-          if ($LASTEXITCODE -ne 0) { throw "CPU worker self-test failed" }
+          $selfTest = Start-Process -FilePath $cpuDestination -ArgumentList "--self-test" -Wait -PassThru
+          if ($selfTest.ExitCode -ne 0) { throw "CPU worker self-test failed with exit code $($selfTest.ExitCode)" }
+
           foreach ($required in @("stress_studio.exe", "Compute-Stress-CPU-Worker.exe", "GPU-Stress-JUCE-Background.exe")) {
-            if (-not (Test-Path (Join-Path $bundle $required))) { throw "$required is missing" }
+            $requiredPath = Join-Path $bundle $required
+            if (-not (Test-Path $requiredPath -PathType Leaf)) { throw "$required is missing" }
+            $item = Get-Item $requiredPath
+            Write-Host "$required => $($item.FullName) ($($item.Length) bytes)"
           }
-          Compress-Archive -Path "$bundle\*" -DestinationPath Compute-Stress-Studio-Windows-x64.zip -CompressionLevel Optimal
+
+          $asset = Join-Path $PWD "Compute-Stress-Studio-Windows-x64.zip"
+          if (Test-Path $asset) { Remove-Item $asset -Force }
+          Compress-Archive -Path "$bundle\*" -DestinationPath $asset -CompressionLevel Optimal
+          if (-not (Test-Path $asset -PathType Leaf)) { throw "Windows ZIP was not created" }
+          Write-Host "windows_asset_size_bytes=$((Get-Item $asset).Length)"
       - uses: actions/upload-artifact@v4
         with:
           name: compute-stress-studio-windows
