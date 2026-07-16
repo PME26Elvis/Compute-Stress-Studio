@@ -21,8 +21,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates cmake curl desktop-file-utils file git g++ make ninja-build \
-            patchelf pkg-config xz-utils \
+            ca-certificates cmake curl file git g++ make ninja-build pkg-config xz-utils \
             libasound2-dev libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
             libgtk-3-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
             libxinerama-dev libxrandr-dev libxrender-dev xvfb xauth
@@ -98,27 +97,28 @@ jobs:
           set +e
           {
             set -x
-            rm -rf AppDir GPU-Stress-JUCE-Backup-x86_64.AppImage
+            rm -rf AppDir
             mkdir -p AppDir/usr/bin
             gui="$(find build/juce-linux -type f -name GPU-Stress-JUCE -perm -111 | head -n1)"
             cli="$(find build/juce-linux -type f -name GPU-Stress-JUCE-CLI -perm -111 | head -n1)"
-            ldd "$gui" || true
             curl --fail --location --retry 3 \
               https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
               -o linuxdeploy-x86_64.AppImage
             chmod +x linuxdeploy-x86_64.AppImage
-            NO_STRIP=1 APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
+            APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-x86_64.AppImage \
               --appdir AppDir \
               --executable "$gui" \
               --desktop-file native-juce/packaging/appimage/gpu-stress-juce.desktop \
               --icon-file native-juce/packaging/appimage/gpu-stress-juce.svg
             cp "$cli" AppDir/usr/bin/GPU-Stress-JUCE-CLI
+            rm -f AppDir/AppRun
             cp native-juce/packaging/appimage/AppRun AppDir/AppRun
             chmod +x AppDir/AppRun
+            test -x AppDir/usr/bin/GPU-Stress-JUCE
+            file AppDir/usr/bin/GPU-Stress-JUCE | grep -q 'ELF'
             cp docs/JUCE_WAVEMIX_BACKUP_GUIDE.md AppDir/
             cp native-juce/THIRD_PARTY_NOTICES.md AppDir/
             cp build/juce-linux/_deps/juce-src/LICENSE.md AppDir/JUCE-LICENSE.md
-            find AppDir -maxdepth 3 -type f -printf '%p\n' | sort
             curl --fail --location --retry 3 \
               https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
               -o appimagetool-x86_64.AppImage
@@ -126,13 +126,14 @@ jobs:
             ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool-x86_64.AppImage \
               AppDir GPU-Stress-JUCE-Backup-x86_64.AppImage
             chmod +x GPU-Stress-JUCE-Backup-x86_64.AppImage
-            file GPU-Stress-JUCE-Backup-x86_64.AppImage
             xvfb-run -a env APPIMAGE_EXTRACT_AND_RUN=1 \
               ./GPU-Stress-JUCE-Backup-x86_64.AppImage --gui-smoke
+            size="$(stat -c%s GPU-Stress-JUCE-Backup-x86_64.AppImage)"
+            test "$size" -gt 1000000
           } > build/juce-linux/appimage.log 2>&1
           status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
-          tail -n 220 build/juce-linux/appimage.log
+          tail -n 180 build/juce-linux/appimage.log
           exit 0
       - name: Upload AppImage diagnostic log
         if: always()
@@ -140,14 +141,6 @@ jobs:
         with:
           name: juce-appimage-log
           path: build/juce-linux/appimage.log
-          retention-days: 3
-      - name: Upload AppImage diagnostic asset
-        if: steps.appimage.outputs.status == '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: juce-appimage-diagnostic
-          path: GPU-Stress-JUCE-Backup-x86_64.AppImage
-          compression-level: 0
           retention-days: 3
       - name: Fail when AppImage failed
         if: steps.appimage.outputs.status != '0'
