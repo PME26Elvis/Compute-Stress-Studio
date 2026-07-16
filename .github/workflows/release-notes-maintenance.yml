@@ -89,4 +89,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
-        run: gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+
+      - name: Record successful maintenance
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.meta.outputs.title }}
+          NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          cat > docs/releases/LAST_RELEASE_MAINTENANCE.md <<EOF
+          # Last release notes maintenance
+
+          This file is written only after GitHub CLI successfully edits and reads back the target GitHub Release.
+
+          - Release tag: \`$RELEASE_TAG\`
+          - Release title: **$RELEASE_TITLE**
+          - Notes source: \`$NOTES_FILE\`
+          - Workflow source commit: \`$GITHUB_SHA\`
+          - Completed at (UTC): \`$completed_at\`
+          EOF
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/releases/LAST_RELEASE_MAINTENANCE.md
+          if git diff --cached --quiet; then
+            echo 'Maintenance record is already current.'
+            exit 0
+          fi
+          git commit -m 'Record release notes maintenance'
+          git push origin HEAD:main
