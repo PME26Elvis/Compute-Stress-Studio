@@ -19,8 +19,9 @@ abstract final class StudioTheme {
       useMaterial3: true,
       brightness: brightness,
       colorScheme: scheme,
-      scaffoldBackgroundColor:
-          dark ? const Color(0xFF0C0F14) : const Color(0xFFF4F6FA),
+      scaffoldBackgroundColor: dark
+          ? const Color(0xFF0C0F14)
+          : const Color(0xFFF4F6FA),
       canvasColor: dark ? const Color(0xFF11151C) : Colors.white,
       cardTheme: CardThemeData(
         elevation: 0,

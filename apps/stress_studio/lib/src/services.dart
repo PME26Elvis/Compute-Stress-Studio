@@ -38,11 +38,13 @@ final class IsolateCpuStressService implements CpuStressService {
       'windowMicros': 50000,
     };
     for (var index = 0; index < configuration.cpuThreads; index += 1) {
-      _isolates.add(await Isolate.spawn<Map<String, Object>>(
-        cpuStressWorker,
-        command,
-        debugName: 'stress-studio-cpu-$index',
-      ));
+      _isolates.add(
+        await Isolate.spawn<Map<String, Object>>(
+          cpuStressWorker,
+          command,
+          debugName: 'stress-studio-cpu-$index',
+        ),
+      );
     }
   }
 
@@ -110,28 +112,27 @@ final class JuceGpuWorkerService implements GpuStressService {
       throw StateError('Bundled GPU worker was not found at $workerPath');
     }
 
-    final process = await Process.start(
-      workerPath,
-      <String>[
-        '--duration',
-        configuration.duration.inSeconds.toString(),
-        '--load',
-        configuration.gpuLoadPercent.round().toString(),
-        '--memory-mib',
-        configuration.gpuMemoryMiB.toString(),
-        '--device',
-        configuration.gpuDeviceIndex.toString(),
-      ],
-    );
+    final process = await Process.start(workerPath, <String>[
+      '--duration',
+      configuration.duration.inSeconds.toString(),
+      '--load',
+      configuration.gpuLoadPercent.round().toString(),
+      '--memory-mib',
+      configuration.gpuMemoryMiB.toString(),
+      '--device',
+      configuration.gpuDeviceIndex.toString(),
+    ]);
     _process = process;
 
     unawaited(process.stdout.drain<void>());
     unawaited(process.stderr.drain<void>());
-    unawaited(process.exitCode.then((_) {
-      if (identical(_process, process)) {
-        _process = null;
-      }
-    }));
+    unawaited(
+      process.exitCode.then((_) {
+        if (identical(_process, process)) {
+          _process = null;
+        }
+      }),
+    );
 
     await Future<void>.delayed(const Duration(milliseconds: 350));
     if (_process == null) {

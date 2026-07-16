@@ -10,9 +10,9 @@ final class StudioController extends ChangeNotifier {
   StudioController({
     required CpuStressService cpuService,
     required GpuStressService gpuService,
-  })  : _cpuService = cpuService,
-        _gpuService = gpuService,
-        _configuration = RunConfiguration.defaults();
+  }) : _cpuService = cpuService,
+       _gpuService = gpuService,
+       _configuration = RunConfiguration.defaults();
 
   final CpuStressService _cpuService;
   final GpuStressService _gpuService;
@@ -41,20 +41,20 @@ final class StudioController extends ChangeNotifier {
   double get progress => _configuration.duration.inMilliseconds == 0
       ? 0.0
       : (_elapsed.inMilliseconds / _configuration.duration.inMilliseconds)
-          .clamp(0.0, 1.0)
-          .toDouble();
+            .clamp(0.0, 1.0)
+            .toDouble();
   Duration get remaining {
     final value = _configuration.duration - _elapsed;
     return value.isNegative ? Duration.zero : value;
   }
 
   CapabilitySnapshot get capabilities => CapabilitySnapshot(
-        operatingSystem:
-            '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
-        logicalProcessors: Platform.numberOfProcessors,
-        gpuWorkerPath: _gpuService.workerPath,
-        gpuWorkerAvailable: _gpuService.isAvailable,
-      );
+    operatingSystem:
+        '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
+    logicalProcessors: Platform.numberOfProcessors,
+    gpuWorkerPath: _gpuService.workerPath,
+    gpuWorkerAvailable: _gpuService.isAvailable,
+  );
 
   void selectPage(int value) {
     if (_selectedPage == value) {

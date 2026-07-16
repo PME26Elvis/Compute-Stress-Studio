@@ -17,75 +17,75 @@ class RunConfiguration {
   });
 
   factory RunConfiguration.defaults() => RunConfiguration(
-        duration: const Duration(hours: 1),
-        cpuEnabled: true,
-        cpuLoadPercent: 65,
-        cpuThreads: Platform.numberOfProcessors.clamp(1, 64).toInt(),
-        gpuEnabled: true,
-        gpuLoadPercent: 80,
-        gpuMemoryMiB: 192,
-        gpuDeviceIndex: 0,
-        presetName: 'Balanced',
-      );
+    duration: const Duration(hours: 1),
+    cpuEnabled: true,
+    cpuLoadPercent: 65,
+    cpuThreads: Platform.numberOfProcessors.clamp(1, 64).toInt(),
+    gpuEnabled: true,
+    gpuLoadPercent: 80,
+    gpuMemoryMiB: 192,
+    gpuDeviceIndex: 0,
+    presetName: 'Balanced',
+  );
 
   factory RunConfiguration.preset(StudioPreset preset) {
     final logicalCores = Platform.numberOfProcessors.clamp(1, 64).toInt();
     return switch (preset) {
       StudioPreset.balanced => RunConfiguration(
-          duration: const Duration(hours: 1),
-          cpuEnabled: true,
-          cpuLoadPercent: 65,
-          cpuThreads: logicalCores,
-          gpuEnabled: true,
-          gpuLoadPercent: 80,
-          gpuMemoryMiB: 192,
-          gpuDeviceIndex: 0,
-          presetName: 'Balanced',
-        ),
+        duration: const Duration(hours: 1),
+        cpuEnabled: true,
+        cpuLoadPercent: 65,
+        cpuThreads: logicalCores,
+        gpuEnabled: true,
+        gpuLoadPercent: 80,
+        gpuMemoryMiB: 192,
+        gpuDeviceIndex: 0,
+        presetName: 'Balanced',
+      ),
       StudioPreset.cpuValidation => RunConfiguration(
-          duration: const Duration(minutes: 30),
-          cpuEnabled: true,
-          cpuLoadPercent: 85,
-          cpuThreads: logicalCores,
-          gpuEnabled: false,
-          gpuLoadPercent: 0,
-          gpuMemoryMiB: 192,
-          gpuDeviceIndex: 0,
-          presetName: 'CPU validation',
-        ),
+        duration: const Duration(minutes: 30),
+        cpuEnabled: true,
+        cpuLoadPercent: 85,
+        cpuThreads: logicalCores,
+        gpuEnabled: false,
+        gpuLoadPercent: 0,
+        gpuMemoryMiB: 192,
+        gpuDeviceIndex: 0,
+        presetName: 'CPU validation',
+      ),
       StudioPreset.gpuValidation => RunConfiguration(
-          duration: const Duration(minutes: 30),
-          cpuEnabled: false,
-          cpuLoadPercent: 0,
-          cpuThreads: logicalCores,
-          gpuEnabled: true,
-          gpuLoadPercent: 87,
-          gpuMemoryMiB: 192,
-          gpuDeviceIndex: 0,
-          presetName: 'GPU validation',
-        ),
+        duration: const Duration(minutes: 30),
+        cpuEnabled: false,
+        cpuLoadPercent: 0,
+        cpuThreads: logicalCores,
+        gpuEnabled: true,
+        gpuLoadPercent: 87,
+        gpuMemoryMiB: 192,
+        gpuDeviceIndex: 0,
+        presetName: 'GPU validation',
+      ),
       StudioPreset.endurance => RunConfiguration(
-          duration: const Duration(hours: 96),
-          cpuEnabled: true,
-          cpuLoadPercent: 60,
-          cpuThreads: logicalCores,
-          gpuEnabled: true,
-          gpuLoadPercent: 87,
-          gpuMemoryMiB: 192,
-          gpuDeviceIndex: 0,
-          presetName: '96-hour endurance',
-        ),
+        duration: const Duration(hours: 96),
+        cpuEnabled: true,
+        cpuLoadPercent: 60,
+        cpuThreads: logicalCores,
+        gpuEnabled: true,
+        gpuLoadPercent: 87,
+        gpuMemoryMiB: 192,
+        gpuDeviceIndex: 0,
+        presetName: '96-hour endurance',
+      ),
       StudioPreset.quickCheck => RunConfiguration(
-          duration: const Duration(minutes: 2),
-          cpuEnabled: true,
-          cpuLoadPercent: 25,
-          cpuThreads: logicalCores,
-          gpuEnabled: true,
-          gpuLoadPercent: 25,
-          gpuMemoryMiB: 96,
-          gpuDeviceIndex: 0,
-          presetName: 'Quick check',
-        ),
+        duration: const Duration(minutes: 2),
+        cpuEnabled: true,
+        cpuLoadPercent: 25,
+        cpuThreads: logicalCores,
+        gpuEnabled: true,
+        gpuLoadPercent: 25,
+        gpuMemoryMiB: 96,
+        gpuDeviceIndex: 0,
+        presetName: 'Quick check',
+      ),
     };
   }
 
@@ -136,18 +136,17 @@ class RunConfiguration {
     int? gpuMemoryMiB,
     int? gpuDeviceIndex,
     String? presetName,
-  }) =>
-      RunConfiguration(
-        duration: duration ?? this.duration,
-        cpuEnabled: cpuEnabled ?? this.cpuEnabled,
-        cpuLoadPercent: cpuLoadPercent ?? this.cpuLoadPercent,
-        cpuThreads: cpuThreads ?? this.cpuThreads,
-        gpuEnabled: gpuEnabled ?? this.gpuEnabled,
-        gpuLoadPercent: gpuLoadPercent ?? this.gpuLoadPercent,
-        gpuMemoryMiB: gpuMemoryMiB ?? this.gpuMemoryMiB,
-        gpuDeviceIndex: gpuDeviceIndex ?? this.gpuDeviceIndex,
-        presetName: presetName ?? this.presetName,
-      );
+  }) => RunConfiguration(
+    duration: duration ?? this.duration,
+    cpuEnabled: cpuEnabled ?? this.cpuEnabled,
+    cpuLoadPercent: cpuLoadPercent ?? this.cpuLoadPercent,
+    cpuThreads: cpuThreads ?? this.cpuThreads,
+    gpuEnabled: gpuEnabled ?? this.gpuEnabled,
+    gpuLoadPercent: gpuLoadPercent ?? this.gpuLoadPercent,
+    gpuMemoryMiB: gpuMemoryMiB ?? this.gpuMemoryMiB,
+    gpuDeviceIndex: gpuDeviceIndex ?? this.gpuDeviceIndex,
+    presetName: presetName ?? this.presetName,
+  );
 }
 
 enum StudioPreset {
@@ -158,24 +157,17 @@ enum StudioPreset {
   quickCheck,
 }
 
-enum StudioRunState {
-  idle,
-  starting,
-  running,
-  stopping,
-  completed,
-  error,
-}
+enum StudioRunState { idle, starting, running, stopping, completed, error }
 
 extension StudioRunStateLabel on StudioRunState {
   String get label => switch (this) {
-        StudioRunState.idle => 'Ready',
-        StudioRunState.starting => 'Starting',
-        StudioRunState.running => 'Running',
-        StudioRunState.stopping => 'Stopping',
-        StudioRunState.completed => 'Completed',
-        StudioRunState.error => 'Needs attention',
-      };
+    StudioRunState.idle => 'Ready',
+    StudioRunState.starting => 'Starting',
+    StudioRunState.running => 'Running',
+    StudioRunState.stopping => 'Stopping',
+    StudioRunState.completed => 'Completed',
+    StudioRunState.error => 'Needs attention',
+  };
 }
 
 @immutable

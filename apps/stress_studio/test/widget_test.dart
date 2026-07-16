@@ -5,7 +5,9 @@ import 'package:stress_studio/src/services.dart';
 import 'package:stress_studio/src/studio_app.dart';
 
 void main() {
-  testWidgets('dashboard exposes coordinated workload controls', (tester) async {
+  testWidgets('dashboard exposes coordinated workload controls', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1600, 1200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
