@@ -36,6 +36,7 @@ target_compile_features(gpu_stress_backup_core PUBLIC cxx_std_20)
 target_compile_definitions(gpu_stress_backup_core PUBLIC
     GPU_STRESS_DEFAULT_DURATION_SECONDS=345600
     GPU_STRESS_DEFAULT_LOAD_PERCENT=87
+    GPU_STRESS_HAS_CUDA=$<BOOL:${GPU_STRESS_ENABLE_CUDA}>
 )
 
 if(MSVC)
@@ -48,7 +49,6 @@ if(GPU_STRESS_ENABLE_CUDA)
     add_library(gpu_stress_backup_cuda STATIC src/CudaWaveMixBackend.cu)
     target_include_directories(gpu_stress_backup_cuda PUBLIC include)
     target_link_libraries(gpu_stress_backup_cuda PUBLIC gpu_stress_backup_core CUDA::cudart_static)
-    target_compile_definitions(gpu_stress_backup_cuda PUBLIC GPU_STRESS_HAS_CUDA=1)
     set_target_properties(gpu_stress_backup_cuda PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
         CUDA_RESOLVE_DEVICE_SYMBOLS ON
@@ -56,7 +56,6 @@ if(GPU_STRESS_ENABLE_CUDA)
 else()
     add_library(gpu_stress_backup_cuda INTERFACE)
     target_link_libraries(gpu_stress_backup_cuda INTERFACE gpu_stress_backup_core)
-    target_compile_definitions(gpu_stress_backup_core PUBLIC GPU_STRESS_HAS_CUDA=0)
 endif()
 
 add_executable(GPUStressJUCECLI src/CliMain.cpp)
@@ -99,6 +98,7 @@ if(GPU_STRESS_BUILD_GUI)
     target_compile_definitions(GPUStressJUCE PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:GPUStressJUCE,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="${PROJECT_VERSION}"
     )
