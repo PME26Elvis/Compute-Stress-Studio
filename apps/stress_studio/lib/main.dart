@@ -7,7 +7,7 @@ import 'src/services.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   final controller = StudioController(
-    cpuService: IsolateCpuStressService(),
+    cpuService: ProcessCpuStressService(),
     gpuService: JuceGpuWorkerService(),
   );
   runApp(OwnedStressStudioApp(controller: controller));
