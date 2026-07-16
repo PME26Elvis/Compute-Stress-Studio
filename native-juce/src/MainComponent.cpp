@@ -2,6 +2,7 @@
 
 #include "GpuStressBackup/StressBackend.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace gpu_stress_backup {
