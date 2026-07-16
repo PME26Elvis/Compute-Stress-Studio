@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(GPUStressJUCEBackup VERSION 1.0.0 LANGUAGES CXX)
+project(GPUStressJUCEBackup VERSION 1.0.0 LANGUAGES C CXX)
 
 option(GPU_STRESS_ENABLE_CUDA "Build the real CUDA WaveMix backend" ON)
 option(GPU_STRESS_BUILD_GUI "Build the JUCE GUI and hidden background application" ON)
