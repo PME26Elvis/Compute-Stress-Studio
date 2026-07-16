@@ -414,10 +414,10 @@ final class WorkloadComposer extends StatelessWidget {
                 _LabeledSlider(
                   label: 'CPU worker threads',
                   valueLabel: '${config.cpuThreads}',
-                  value: config.cpuThreads.toDouble().clamp(
-                    1,
-                    math.max(1, processors).toDouble(),
-                  ),
+                  value: config.cpuThreads
+                      .toDouble()
+                      .clamp(1, math.max(1, processors).toDouble())
+                      .toDouble(),
                   min: 1,
                   max: math.max(2, processors).toDouble(),
                   divisions: math.max(1, processors - 1),
@@ -1068,7 +1068,7 @@ final class _LabeledSlider extends StatelessWidget {
           ],
         ),
         Slider(
-          value: value.clamp(min, max),
+          value: value.clamp(min, max).toDouble(),
           min: min,
           max: max,
           divisions: divisions,

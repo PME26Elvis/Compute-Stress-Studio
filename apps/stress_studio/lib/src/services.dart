@@ -59,7 +59,6 @@ abstract base class _ManagedWorkerProcess {
     final process = await Process.start(
       workerPath,
       argumentsFor(configuration),
-      mode: ProcessStartMode.normal,
     );
     _process = process;
 
