@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: flutter-stress-studio-${{ github.ref }}
@@ -57,11 +58,54 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         run: dart format lib test
       - name: Analyze
+        id: analyze
+        continue-on-error: true
         working-directory: ${{ env.APP_DIR }}
-        run: flutter analyze
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter analyze 2>&1 | tee analyze.log
       - name: Test
+        id: tests
+        continue-on-error: true
         working-directory: ${{ env.APP_DIR }}
-        run: flutter test --coverage
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter test --coverage 2>&1 | tee test.log
+      - name: Report quality diagnostics
+        if: github.event_name == 'pull_request' && (steps.analyze.outcome != 'success' || steps.tests.outcome != 'success')
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          {
+            echo '<!-- stress-studio-quality -->'
+            echo '## Stress Studio quality diagnostics'
+            echo
+            echo '**Analyzer outcome:** `${{ steps.analyze.outcome }}`  '
+            echo '**Test outcome:** `${{ steps.tests.outcome }}`'
+            echo
+            echo '<details><summary>Analyzer</summary>'
+            echo
+            echo '```text'
+            tail -n 180 analyze.log
+            echo '```'
+            echo '</details>'
+            echo
+            echo '<details><summary>Tests</summary>'
+            echo
+            echo '```text'
+            tail -n 180 test.log
+            echo '```'
+            echo '</details>'
+          } > quality-comment.md
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file quality-comment.md
+      - name: Enforce quality result
+        if: steps.analyze.outcome != 'success' || steps.tests.outcome != 'success'
+        run: exit 1
 
   windows-package:
     runs-on: windows-2022
