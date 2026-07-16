@@ -1,84 +1,95 @@
-# Stress Studio Flutter application
+# Compute Stress Studio Flutter application
 
-`apps/stress_studio` is the flagship desktop application inside **Compute Stress Studio**. It coordinates CPU and NVIDIA GPU stress from one Material 3 interface without placing long-running compute loops on Flutter's UI isolate.
+`apps/stress_studio` is the flagship Material 3 desktop control plane for coordinated CPU and NVIDIA GPU stress.
 
 ## Current status
 
-- implemented and merged to `main`;
-- Windows x64 and Linux x64 release builds validated in GitHub Actions;
-- current preview tag: `stress-studio-v0.1.14`;
-- application-close lifecycle owns and disposes `StudioController`, stopping active CPU isolates and the bundled GPU worker;
-- physical NVIDIA execution still requires a target-machine smoke test.
+- Windows x64 and Linux x64 release bundles;
+- current preview: `compute-stress-studio-v0.2.0`;
+- CPU and GPU hot loops both run outside the Flutter process;
+- application-close lifecycle stops both child processes;
+- physical NVIDIA execution still requires target-machine validation.
 
 ## Architecture
 
 ```text
 OwnedStressStudioApp
         |
-StressStudioApp / Material 3 UI
+Compute Stress Studio / Material 3
         |
 StudioController
-        |
-+----------------------+-------------------------------+
-| IsolateCpuStressService | JuceGpuWorkerService       |
-| Dart isolate pool       | external silent executable |
-+----------------------+-------------------------------+
+    /            \
+ProcessCpuStress  JuceGpuWorker
+Service           Service
+    |                 |
+Compute-Stress-   GPU-Stress-JUCE-
+CPU-Worker        Background
 ```
 
-Flutter owns rendering, navigation, validation, presets, lifecycle state, history, and error presentation. CPU work runs in killable isolates. GPU work runs behind a process boundary using the existing native JUCE CUDA WaveMix worker.
+Flutter owns rendering, navigation, validation, presets, lifecycle state, history, rollback, and error presentation. It does not execute a stress hot loop.
+
+The native CPU worker uses a 50 ms duty window and lowers its process priority. This v0.2 boundary replaces the first preview's in-process Dart isolate pool after a Windows UI responsiveness report.
 
 ## Product behavior
 
-- responsive NavigationRail, expanded NavigationRail, and NavigationBar layouts;
+- responsive NavigationRail/NavigationBar layouts;
 - light, dark, and system themes;
-- dashboard, presets, diagnostics, and settings destinations;
+- Dashboard, Presets, Diagnostics, and Settings;
 - independent CPU/GPU enable switches and targets;
-- coordinated start, idempotent stop, timeout completion, and rollback on GPU startup failure;
+- coordinated start, idempotent stop, timeout completion, and rollback;
 - **Ctrl+Enter** starts and **Escape** stops;
 - configuration locks while a session is active;
-- displayed percentages are requested workload targets, not measured telemetry.
+- displayed percentages are requested targets, not telemetry;
+- Diagnostics shows both worker paths and readiness.
 
-## Bootstrap from source
-
-Platform scaffolding is generated from the pinned Flutter SDK rather than checked into the repository:
+## Source bootstrap
 
 ```bash
 cd apps/stress_studio
 flutter create --platforms=windows,linux --org com.pme26elvis --project-name stress_studio .
 flutter pub get
-```
-
-Run on the matching host:
-
-```bash
-flutter run -d windows
-flutter run -d linux
-```
-
-## Validation
-
-```bash
 dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test --coverage
-flutter build windows --release
-flutter build linux --release
 ```
 
-The repository workflow additionally compiles and tests the JUCE CUDA worker, copies it beside the Flutter executable, verifies both files, and archives the complete runner directory.
+A locally built Flutter app also needs the native workers beside the executable. The repository workflow builds and injects them automatically.
 
-## GPU worker contract
+## Worker contracts
 
-The packaged application expects one of these files beside the Flutter executable:
+### CPU
+
+```text
+Windows: Compute-Stress-CPU-Worker.exe
+Linux:   Compute-Stress-CPU-Worker
+```
+
+Arguments:
+
+```text
+--duration <seconds> --load <0..100> --threads <1..64>
+```
+
+Windows uses the GUI subsystem and Below Normal process priority. Linux applies a positive nice value.
+
+### GPU
 
 ```text
 Windows: GPU-Stress-JUCE-Background.exe
 Linux:   GPU-Stress-JUCE-Background
 ```
 
-Stress Studio passes `--duration`, `--load`, `--memory-mib`, and `--device`. Early process exit is treated as startup failure and rolls back the CPU workload. Stop first sends a graceful termination request and escalates to forced termination after a short timeout.
+Arguments:
 
-The app intentionally does not launch `nvidia-smi` or label target values as physical readings. Use an external monitor for utilization, temperature, fan, clocks, and board power.
+```text
+--duration <seconds> --load <0..100> --memory-mib <MiB> --device <index>
+```
+
+Early process exit is startup failure. Stop terminates the child and escalates after a timeout. A failure during transactional startup rolls back the other worker.
+
+## Monitoring policy
+
+The Flutter/JUCE path does not repeatedly launch `nvidia-smi`, write telemetry files, or label targets as physical readings. Use an external monitor for measured utilization, temperature, fan, clocks, and board power.
 
 ## Related documents
 
