@@ -122,8 +122,6 @@ final class JuceGpuWorkerService implements GpuStressService {
         '--device',
         configuration.gpuDeviceIndex.toString(),
       ],
-      runInShell: false,
-      mode: ProcessStartMode.normal,
     );
     _process = process;
 
@@ -150,7 +148,7 @@ final class JuceGpuWorkerService implements GpuStressService {
     if (process == null) {
       return;
     }
-    process.kill(ProcessSignal.sigterm);
+    process.kill();
     try {
       await process.exitCode.timeout(const Duration(seconds: 2));
     } on TimeoutException {
