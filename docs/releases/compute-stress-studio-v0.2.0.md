@@ -1,6 +1,6 @@
 # Compute Stress Studio preview 0.2.0
 
-This release fixes the Windows UI responsiveness problem reported in the first Flutter preview and completes the repository rename to **Compute Stress Studio**.
+This release fixes the Windows UI responsiveness problem reported in the first Flutter preview and completes the repository rename to **Compute Stress Studio**. It supersedes `stress-studio-v0.1.14` for normal Windows use.
 
 ## Most important fix
 
