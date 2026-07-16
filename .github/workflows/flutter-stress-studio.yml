@@ -79,7 +79,6 @@ jobs:
           title=''
           notes_file=''
           prerelease=true
-
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             should_release=true
             tag="$DISPATCH_TAG"
@@ -100,7 +99,6 @@ jobs:
           import json
           import sys
           from pathlib import Path
-
           data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
           for key in ('tag', 'title', 'notes_file', 'prerelease'):
               if key not in data:
@@ -117,7 +115,6 @@ jobs:
               prerelease="${metadata[3]}"
             fi
           fi
-
           if [[ "$should_release" == "true" ]]; then
             tag="${tag#refs/tags/}"
             [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid release tag: $tag" >&2; exit 1; }
@@ -127,7 +124,6 @@ jobs:
               exit 1
             fi
           fi
-
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "title=$title" >> "$GITHUB_OUTPUT"
@@ -139,12 +135,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S native-cpu -B build/cpu-worker -G Ninja -DCMAKE_BUILD_TYPE=Release
-        name: Configure CPU worker
-      - run: cmake --build build/cpu-worker --parallel 2
-        name: Build CPU worker
-      - run: ctest --test-dir build/cpu-worker --output-on-failure
-        name: Test CPU worker
+      - name: Configure CPU worker
+        run: cmake -S native-cpu -B build/cpu-worker -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build CPU worker
+        run: cmake --build build/cpu-worker --parallel 2
+      - name: Test CPU worker
+        run: ctest --test-dir build/cpu-worker --output-on-failure
 
   quality:
     runs-on: ubuntu-24.04
@@ -165,6 +161,35 @@ jobs:
       - name: Resolve dependencies
         working-directory: ${{ env.APP_DIR }}
         run: flutter pub get
+      - name: Apply strict analyzer fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          studio = Path('apps/stress_studio/lib/src/studio_app.dart')
+          text = studio.read_text(encoding='utf-8')
+          old = """value: config.cpuThreads.toDouble().clamp(
+                              1,
+                              math.max(1, processors).toDouble(),
+                            ),"""
+          new = """value: config.cpuThreads
+                              .toDouble()
+                              .clamp(1, math.max(1, processors).toDouble())
+                              .toDouble(),"""
+          if old in text:
+              text = text.replace(old, new, 1)
+          text = text.replace(
+              'value: value.clamp(min, max),',
+              'value: value.clamp(min, max).toDouble(),',
+          )
+          studio.write_text(text, encoding='utf-8')
+
+          services = Path('apps/stress_studio/lib/src/services.dart')
+          service_text = services.read_text(encoding='utf-8')
+          service_text = service_text.replace(
+              '      mode: ProcessStartMode.normal,\n',
+              '',
+          )
+          services.write_text(service_text, encoding='utf-8')
       - name: Normalize Dart formatting
         working-directory: ${{ env.APP_DIR }}
         run: dart format lib test
@@ -178,7 +203,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add apps/stress_studio/lib apps/stress_studio/test
-          git commit -m 'Format Flutter v0.2 sources'
+          git commit -m 'Fix and format Flutter v0.2 sources'
           git push origin HEAD:${{ github.head_ref }}
       - name: Analyze
         working-directory: ${{ env.APP_DIR }}
@@ -353,8 +378,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd release-assets
-          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
-            | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -366,13 +390,11 @@ jobs:
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "$RELEASE_TITLE" --notes-file "$NOTES_FILE" --prerelease="$PRERELEASE"
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TITLE" --notes-file "$NOTES_FILE" --prerelease="$PRERELEASE"
           else
             flags=()
             if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
-            gh release create "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "$RELEASE_TITLE" --notes-file "$NOTES_FILE" "${flags[@]}"
+            gh release create "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$RELEASE_TITLE" --notes-file "$NOTES_FILE" "${flags[@]}"
           fi
       - name: Verify published release
         env:
