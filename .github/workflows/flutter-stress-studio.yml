@@ -79,6 +79,7 @@ jobs:
           title=''
           notes_file=''
           prerelease=true
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             should_release=true
             tag="$DISPATCH_TAG"
@@ -99,6 +100,7 @@ jobs:
           import json
           import sys
           from pathlib import Path
+
           data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
           for key in ('tag', 'title', 'notes_file', 'prerelease'):
               if key not in data:
@@ -115,6 +117,7 @@ jobs:
               prerelease="${metadata[3]}"
             fi
           fi
+
           if [[ "$should_release" == "true" ]]; then
             tag="${tag#refs/tags/}"
             [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid release tag: $tag" >&2; exit 1; }
@@ -124,6 +127,7 @@ jobs:
               exit 1
             fi
           fi
+
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "title=$title" >> "$GITHUB_OUTPUT"
@@ -147,9 +151,6 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
-          persist-credentials: true
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -161,50 +162,9 @@ jobs:
       - name: Resolve dependencies
         working-directory: ${{ env.APP_DIR }}
         run: flutter pub get
-      - name: Apply strict analyzer fixes
-        shell: python
-        run: |
-          from pathlib import Path
-          studio = Path('apps/stress_studio/lib/src/studio_app.dart')
-          text = studio.read_text(encoding='utf-8')
-          old = """value: config.cpuThreads.toDouble().clamp(
-                              1,
-                              math.max(1, processors).toDouble(),
-                            ),"""
-          new = """value: config.cpuThreads
-                              .toDouble()
-                              .clamp(1, math.max(1, processors).toDouble())
-                              .toDouble(),"""
-          if old in text:
-              text = text.replace(old, new, 1)
-          text = text.replace(
-              'value: value.clamp(min, max),',
-              'value: value.clamp(min, max).toDouble(),',
-          )
-          studio.write_text(text, encoding='utf-8')
-
-          services = Path('apps/stress_studio/lib/src/services.dart')
-          service_text = services.read_text(encoding='utf-8')
-          service_text = service_text.replace(
-              '      mode: ProcessStartMode.normal,\n',
-              '',
-          )
-          services.write_text(service_text, encoding='utf-8')
-      - name: Normalize Dart formatting
+      - name: Verify formatting
         working-directory: ${{ env.APP_DIR }}
-        run: dart format lib test
-      - name: Commit normalized sources to PR branch
-        if: github.event_name == 'pull_request'
-        run: |
-          if git diff --quiet -- apps/stress_studio/lib apps/stress_studio/test; then
-            echo 'Dart sources already match Flutter 3.44 formatting.'
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add apps/stress_studio/lib apps/stress_studio/test
-          git commit -m 'Fix and format Flutter v0.2 sources'
-          git push origin HEAD:${{ github.head_ref }}
+        run: dart format --output=none --set-exit-if-changed lib test
       - name: Analyze
         working-directory: ${{ env.APP_DIR }}
         run: flutter analyze
@@ -264,18 +224,22 @@ jobs:
           $bundle = Join-Path $PWD "dist\Compute-Stress-Studio-Windows-x64"
           New-Item -ItemType Directory -Force -Path $bundle | Out-Null
           Copy-Item "$source\*" $bundle -Recurse -Force
+
           $cpuWorker = Get-ChildItem build\flutter-cpu-windows -Recurse -Filter "Compute-Stress-CPU-Worker.exe" | Select-Object -First 1
           if (-not $cpuWorker) { throw "CPU worker was not found" }
           Copy-Item $cpuWorker.FullName (Join-Path $bundle "Compute-Stress-CPU-Worker.exe")
+
           $gpuWorker = Get-ChildItem build\flutter-juce-windows -Recurse -Filter "GPU-Stress-JUCE.exe" | Select-Object -First 1
           if (-not $gpuWorker) { throw "JUCE GPU worker was not found" }
           Copy-Item $gpuWorker.FullName (Join-Path $bundle "GPU-Stress-JUCE-Background.exe")
+
           Copy-Item README.md $bundle
           Copy-Item docs\FLUTTER_STRESS_STUDIO_SPEC.md $bundle
           Copy-Item docs\RELEASES.md $bundle
           Copy-Item docs\JUCE_WAVEMIX_BACKUP_GUIDE.md $bundle
           Copy-Item native-juce\THIRD_PARTY_NOTICES.md $bundle
           Set-Content -Path (Join-Path $bundle "SOURCE-COMMIT.txt") -Value $env:GITHUB_SHA
+
           & (Join-Path $bundle "Compute-Stress-CPU-Worker.exe") --self-test
           if ($LASTEXITCODE -ne 0) { throw "CPU worker self-test failed" }
           foreach ($required in @("stress_studio.exe", "Compute-Stress-CPU-Worker.exe", "GPU-Stress-JUCE-Background.exe")) {
@@ -318,7 +282,8 @@ jobs:
       - name: Build low-priority CPU worker
         run: |
           cmake -S native-cpu -B build/flutter-cpu-linux -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DCOMPUTE_STRESS_CPU_BUILD_TESTS=ON
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCOMPUTE_STRESS_CPU_BUILD_TESTS=ON
           cmake --build build/flutter-cpu-linux --parallel 2
           ctest --test-dir build/flutter-cpu-linux --output-on-failure
       - name: Build JUCE GPU worker
@@ -342,17 +307,20 @@ jobs:
           bundle="$PWD/dist/Compute-Stress-Studio-Linux-x64"
           mkdir -p "$bundle"
           cp -a "$source_dir/." "$bundle/"
+
           cpu_worker="$(find build/flutter-cpu-linux -type f -name Compute-Stress-CPU-Worker -perm -111 | head -n1)"
           gpu_worker="$(find build/flutter-juce-linux -type f -name GPU-Stress-JUCE -perm -111 | head -n1)"
           test -n "$cpu_worker" && test -n "$gpu_worker"
           cp "$cpu_worker" "$bundle/Compute-Stress-CPU-Worker"
           cp "$gpu_worker" "$bundle/GPU-Stress-JUCE-Background"
+
           cp README.md "$bundle/"
           cp docs/FLUTTER_STRESS_STUDIO_SPEC.md "$bundle/"
           cp docs/RELEASES.md "$bundle/"
           cp docs/JUCE_WAVEMIX_BACKUP_GUIDE.md "$bundle/"
           cp native-juce/THIRD_PARTY_NOTICES.md "$bundle/"
           printf '%s\n' "$GITHUB_SHA" > "$bundle/SOURCE-COMMIT.txt"
+
           "$bundle/Compute-Stress-CPU-Worker" --self-test
           test -x "$bundle/stress_studio"
           test -x "$bundle/Compute-Stress-CPU-Worker"
@@ -378,7 +346,9 @@ jobs:
       - name: Generate checksums
         run: |
           cd release-assets
-          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS.txt
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -390,11 +360,20 @@ jobs:
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TITLE" --notes-file "$NOTES_FILE" --prerelease="$PRERELEASE"
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TITLE" \
+              --notes-file "$NOTES_FILE" \
+              --prerelease="$PRERELEASE"
           else
             flags=()
             if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
-            gh release create "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$RELEASE_TITLE" --notes-file "$NOTES_FILE" "${flags[@]}"
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TITLE" \
+              --notes-file "$NOTES_FILE" \
+              "${flags[@]}"
           fi
       - name: Verify published release
         env:
